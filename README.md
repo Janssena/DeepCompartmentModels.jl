@@ -16,7 +16,7 @@ Deep Compartment Models are a combination of neural networks and a system of dif
 
 #### Installation
 
-**Installing Julia. **
+**Installing Julia.**
 
 Most pharmacometricians are used to programming in R, and likely do not yet have julia installed. You can download the appropriate julia installer [here](https://julialang.org/downloads/).  
 
@@ -51,7 +51,7 @@ population = load("myDataset.csv", [:WEIGHT, :AGE])
 
 ann = Flux.Chain(
     # Our data set contains two covariates, which we feed into a hidden layer with 16 neurons
-	Flux.Dense(2, 16), 
+    Flux.Dense(2, 16), 
     Flux.Dense(16, 4), # Our differential equation has four parameters
 )
 
