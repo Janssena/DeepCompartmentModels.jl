@@ -51,7 +51,7 @@ population = load("myDataset.csv", [:WEIGHT, :AGE])
 
 ann = Flux.Chain(
     # Our data set contains two covariates, which we feed into a hidden layer with 16 neurons
-    Flux.Dense(2, 16), 
+    Flux.Dense(2, 16, Flux.sigmoid), 
     Flux.Dense(16, 4), # Our differential equation has four parameters
 )
 
