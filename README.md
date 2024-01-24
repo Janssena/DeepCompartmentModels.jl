@@ -1,6 +1,6 @@
+> We are currently working on a new version, expect breaking changes with respect to the current version v0.1
+
 # DeepCompartmentModels.jl
-
-
 
 A package for fitting Deep Compartment Models in julia. 
 
