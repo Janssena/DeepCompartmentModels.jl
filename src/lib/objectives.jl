@@ -12,6 +12,13 @@ abstract type MixedObjective <: AbstractObjective end
 
 ########## FixedObjectives
 
+"""
+    SSE()
+
+Sum of squared errors objective function:
+
+    L(p) = Σᵢ (yᵢ - f(xᵢ; p))²
+"""
 struct SSE <: FixedObjective end
 
 objective(model::M, args...) where {M<:AbstractModel} = objective(model.objective, model, args...)
@@ -29,6 +36,17 @@ sse(y::AbstractVector{<:AbstractVector}, ŷ::AbstractVector) = sum(abs2, reduce
 # TODO: Potentially add a objective(::SSE, ŷ::AbstractVector{<:Real}) and objective(::SSE, ŷ::AbstractVector{<:AbstractVector}). The latter can do only a single reduce
 
 # TODO: Force the D in LogLikelihood to have eltype Float32
+"""
+    LogLikelihood{D, E}()
+
+LogLikelihood based objective function:
+
+    L(p) = p(y | p, σ)
+
+Default uses a Normal / MultivariateNormal loglikelihood function 
+(as represented by `D`). Different distributions can be passed, and custom 
+parameters can be controlled using the Custom ErrorModel.
+"""
 struct LogLikelihood{D<:Sampleable, E<:ErrorModel} <: FixedObjective 
     error::E
     # Constructors
@@ -67,7 +85,12 @@ end
 # TODO: update_mask!(objective, idxs, p_length) # When we want to choose new set of parameters with random effects. 
 # TODO: set_mask!(objective, p_length) -> should also update model.p
 
-"""PartialFunctions-based implementation"""
+"""
+    init_omega(rng, n)
+    
+Initialization function for the MultivariateNormal prior on random effect 
+parameters.
+"""
 function init_omega(rng::Random.AbstractRNG, n, ::Type{T}=Float32; omega_dist::Sampleable=Normal(0.2, 0.03), C_shape::Real=50.) where T<:Float32 
     ω_init = zeros(T, n)
     rand!(rng, omega_dist, ω_init)
@@ -122,43 +145,6 @@ function init_phi(model::AbstractModel{O,M,P}, pop::Population; sigma_dist::Samp
 end
 
 (init_phi)(; kwargs...) = init_phi$(; kwargs...)
-
-
-# struct FO{T<:Real,E<:ErrorModel,F} <: MixedObjective
-#     error::E
-#     idxs::Vector{Int}
-#     mask::Matrix{T} # Initially empty.
-#     init_prior::F
-#     FO(idxs::AbstractVector{<:Int}; kwargs...) = FO(Additive(), idxs; kwargs...)
-#     function FO(error::E, idxs::AbstractVector{<:Int}, ::Type{T}=Float32; init_prior::F=init_omega) where {T<:Real,E<:ErrorModel,F}
-#         init_mask = Matrix{T}[]
-#         new{T,E,F}(error, idxs, init_mask, init_prior)
-#     end
-# end
-
-# function objective(obj::FO{T,E,F}, model::M, container::Union{AbstractIndividual, Population}, p_) where {T,E<:ErrorModel,F,M<:AbstractModel}
-#     p = constrain(p_)
-#     ŷ, st = forward_adjoint(model, container, p) # Should construct z
-#     Σ = variance(obj.error, p, ŷ)
-#     return -ll(D, ŷ, σ², container.y)
-#     # return -logpdf(MultivariateNormal(ŷ, σ²), reduce(vcat, container.y))
-# end
-
-# function fo(ŷ, Σ)
-#     # TODO: How to calculate ∂F/∂η in our current setup? Setting η in the Individual?
-# end
-
-# struct FOCE{T<:Real,E<:ErrorModel,F} <: MixedObjective 
-#     error::E
-#     idxs::Vector{Int}
-#     mask::Matrix{T} # Initially empty.
-#     init_prior::F
-#     FOCE(idxs::AbstractVector{<:Int}; kwargs...) = FOCE(Additive(), idxs; kwargs...)
-#     function FOCE(error::E, idxs::AbstractVector{<:Int}, ::Type{T}=Float32; init_prior::F=init_omega) where {T<:Real,E<:ErrorModel,F}
-#         init_mask = Matrix{T}[]
-#         new{T,E,F}(error, idxs, init_mask, init_prior)
-#     end
-# end
 
 abstract type AbstractVariationalApproximation end
 struct MeanField <: AbstractVariationalApproximation end
