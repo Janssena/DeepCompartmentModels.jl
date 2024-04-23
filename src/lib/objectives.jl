@@ -173,7 +173,10 @@ end # Takes N samples for each individual at each iteration
 struct SampleAverage{T} <: AbstractQuadratureApproximation 
     n_samples::Int # Number of samples per individual
     samples::Vector{T} # samples need to be initialized based on the population. We then push! additional matrices to this vector
+    SampleAverage(n=20, samples::T=Matrix{Float32}[]) where T = new{T}(n, samples)
 end # N fixed samples
+
+Base.show(io::IO, sa::SampleAverage) = print(io, "SampleAverage($(sa.n_samples), $(isempty(sa.samples) ? "uninitialized" : "..."))")
 
 struct VariationalELBO{V<:AbstractVariationalApproximation,A<:AbstractQuadratureApproximation,E<:ErrorModel,F1,F2} <: MixedObjective
     error::E
@@ -188,14 +191,13 @@ struct VariationalELBO{V<:AbstractVariationalApproximation,A<:AbstractQuadrature
     end
 end
 
-# """Expects that forward returns a one-dimensional array"""
-# function objective(obj::VariationalELBO, model::M, container::Union{AbstractIndividual, Population}, p_) where M<:AbstractModel
-#     p = constrain(p_)
-#     ŷ, st = forward_adjoint(model, container, p)
-#     σ² = variance(obj.error, p, ŷ)
-#     return -ll(D, ŷ, σ², container.y)
-#     # return -logpdf(MultivariateNormal(ŷ, σ²), reduce(vcat, container.y))
-# end
+init_samples!(obj::VariationalELBO{V,A,E,F1,F2}, population::Population) where {V,A<:SampleAverage,E,F1,F2} = init_samples!(obj.approx, length(obj.idxs), length(population))
+
+function init_samples!(sa::SampleAverage, k::Int, n::Int) 
+    empty!(sa.samples)
+    push!(sa.samples, eachslice(randn(Float32, k, sa.n_samples, n), dims=3)...)
+    return nothing
+end
 
 Base.show(io::IO, ::SSE) = print(io, "SSE")
 Base.show(io::IO, obj::LogLikelihood{D,E}) where {D,E} = print(io, "LogLikelihood{$(D.name.name), $(obj.error)}")

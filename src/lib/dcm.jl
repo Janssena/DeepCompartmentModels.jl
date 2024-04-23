@@ -75,14 +75,14 @@ end
 # forward_ode → solve ode
 forward_ode(model::AbstractDEModel, population::Population, z::AbstractMatrix; kwargs...) = forward_ode.((model,), population, eachcol(z); kwargs...)
 forward_ode(model::AbstractDEModel, population::Population, z::AbstractVector{<:AbstractMatrix}; kwargs...) = forward_ode.((model,), population, z; kwargs...)
-function forward_ode(model::AbstractDEModel, individual::AbstractIndividual, zᵢ::AbstractVecOrMat; get_dv::Bool=false, sensealg=nothing, full::Bool=false, interpolate::Bool=false, saveat_ = is_timevariable(individual) ? individual.t.y : individual.t)
+function forward_ode(model::AbstractDEModel, individual::AbstractIndividual, zᵢ::AbstractVecOrMat; get_dv::Bool=false, sensealg=nothing, full::Bool=false, interpolate::Bool=false, saveat = is_timevariable(individual) ? individual.t.y : individual.t)
     u0 = isempty(individual.initial) ? model.problem.u0 : individual.initial
-    saveat = interpolate ? empty(saveat_) : saveat_
+    saveat_ = interpolate ? empty(saveat) : saveat
     save_idxs = full ? (1:length(u0)) : model.dv_compartment
-    prob = remake(model.problem, u0 = u0, tspan = (model.problem.tspan[1], maximum(saveat_)), p = zᵢ)
+    prob = remake(model.problem, u0 = u0, tspan = (model.problem.tspan[1], maximum(saveat)), p = zᵢ)
     interpolate && (individual.callback.save_positions .= 1)
     sol = solve(prob, Tsit5(),
-        save_idxs = save_idxs, saveat = saveat, callback=individual.callback, 
+        save_idxs = save_idxs, saveat = saveat_, callback=individual.callback, 
         tstops=individual.callback.condition.times, sensealg=sensealg
     )
     interpolate && (individual.callback.save_positions .= 0)
@@ -96,7 +96,8 @@ function forward(model::DeepCompartmentModel, container::Union{AbstractIndividua
     return forward_ode(model, container, ζ; kwargs...), st
 end
 
-forward_adjoint(args...) = forward(args...; get_dv=true, full=true, sensealg=ForwardDiffSensitivity(;convert_tspan=true))
+
+forward_adjoint(model::DeepCompartmentModel, args...) = forward(model, args...; get_dv=true, full=true, sensealg=ForwardDiffSensitivity(;convert_tspan=true))
 
 
 ##### Variational Inference:
@@ -117,8 +118,8 @@ take_mc_samples(::Type{T}, mc::MonteCarlo, k, n) where T<:Real = eachslice(randn
 """These always use the path derivative gradient estimator by Roeder et al."""
 # getq(μ, L::AbstractMatrix) = @ignore_derivatives MvNormal(μ, L * L')
 # getq(μ, σ::AbstractVector) = @ignore_derivatives MvNormal(μ, σ)
-getq(μ, L::AbstractMatrix) = MvNormal(μ, L * L')
-getq(μ, σ::AbstractVector) = MvNormal(μ, σ)
+getq(μ, L::AbstractMatrix) = @ignore_derivatives MvNormal(μ, L * L')
+getq(μ, σ::AbstractVector) = @ignore_derivatives MvNormal(μ, σ)
 getq_and_eta(μ, L::AbstractMatrix, ϵ) = (getq(μ, L), μ .+ L * ϵ)
 getq_and_eta(μ, σ::AbstractVector, ϵ) = (getq(μ, σ), μ .+ σ .* ϵ)
 
