@@ -4,7 +4,9 @@ Base.show(io::IO, indv::I) where {I<:AbstractIndividual} = print(io, "$(I.name.n
 
 # TODO: write docs
 """
-Individual for standard PK or PD analyses. In these cases there is a single DV.
+    BasicIndividual(...)
+
+Struct holding the data for a single subject for standard PK or PD analyses.
 """
 struct BasicIndividual{I<:Union{Integer, AbstractString}, X, T, Y<:AbstractVector, C} <: AbstractIndividual{I,X,T,Y,C}
     id::I
@@ -14,20 +16,41 @@ struct BasicIndividual{I<:Union{Integer, AbstractString}, X, T, Y<:AbstractVecto
     callback::C
     initial::Y
     eta::Y
-    # Constructors, TODO: set common type (default = Float32) -> how to do this for the callback?
-    function BasicIndividual(x::X, t::T, y::Y, callback::C; initial=empty(y), eta=empty(y), id::I = "") where {I,X,T,Y,C} 
-        return new{I,X,T,Y,C}(id, x, t, y, callback, initial, eta)
-    end
     function BasicIndividual(;x::X, t::T, y::Y, callback::C, initial::Y, eta::Y, id::I = "") where {I,X,T,Y,C} 
         return new{I,X,T,Y,C}(id, x, t, y, callback, initial, eta)
     end
 end
+# Constructors, TODO: set common type (default = Float32) -> how to do this for the callback?
+"""
+    BasicIndividual(x, t, y, callback; id, initial, eta)
 
-"""Pseudonym for BasicIndividual"""
+# Arguments
+- `x`: Subject specific covariates. If Matrix is passed, predictions can change over time.
+- `t`: Time points of observations. If the subject is time-variable, a NamedTuple (x = [...], y = [...]) should be passed.
+- `y::AbstractVector`: Observations. Must be a vector. Only supports a single DV.
+- `callback`: Differential equation callback containing treatment interventions.
+- `id`: Patient id to store in the Individual instance.
+- `initial`: Initial value of the dependent value at t = 0. Default = [].
+- `eta`: Random effect estimate for the individual. Default = [].
+"""
+function BasicIndividual(x::X, t::T, y::Y, callback::C; initial=empty(y), eta=empty(y), id::I = "") where {I,X,T,Y,C} 
+    return BasicIndividual{I,X,T,Y,C}(id, x, t, y, callback, initial, eta)
+end
+
+"""
+    Individual(...)
+
+Alias for constructing a BasicIndividual.
+"""
 Individual(args...; kwargs...) = BasicIndividual(args...; kwargs...)
 
-is_timevariable(::Type{<:AbstractIndividual{I,X,T,Y,C}}) where {I,X,T,Y,C} = X <: AbstractMatrix && T <: NamedTuple && :x in fieldnames(T)
+"""
+    is_timevariable(individual)
+
+Returns whether the individual has time variable effects.
+"""
 is_timevariable(indv::AbstractIndividual) = is_timevariable(typeof(indv))
+is_timevariable(::Type{<:AbstractIndividual{I,X,T,Y,C}}) where {I,X,T,Y,C} = X <: AbstractMatrix && T <: NamedTuple && :x in fieldnames(T)
 
 function make_timevariable(indv::I) where I<:AbstractIndividual
     if is_timevariable(indv) return indv end
@@ -51,6 +74,13 @@ end
 struct Static end
 struct TimeVariable end
 
+"""
+    Population(AbstractIndividual[...])
+
+Combines a vector of individuals into a Population. Makes sure all the 
+Individuals are of the same type. If any subject has time-dependent effects, all 
+Individuals are transformed to the time-variable format.
+"""
 struct Population{T,I<:AbstractIndividual} <: AbstractArray{I, 1}
     indvs::Vector{I}
     count::Int

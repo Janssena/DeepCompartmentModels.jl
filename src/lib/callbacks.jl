@@ -1,4 +1,5 @@
 import DifferentialEquations: DiscreteCallback
+import Zygote.ChainRules: @ignore_derivatives
 
 function _get_rate_over_t(Iᵢ::AbstractMatrix{T}) where T
     times, doses, rates, durations = eachcol(Iᵢ)
@@ -27,6 +28,15 @@ function _get_rate_over_t(Iᵢ::AbstractMatrix{T}) where T
     return hcat(timepoints, rate_over_t)
 end
 
+"""
+    generate_dosing_callback(I; S1)
+
+Returns a DiscreteCallback implementing the dosing events in intervention matrix `I`.
+
+# Arguments
+- `I`: Matrix with rows containing events with time, dose, rate, and duration columns.
+- `S1`: Scaling factor for the doses. Used to get the dose in the same unit as model parameters. Default = 1.
+"""
 function generate_dosing_callback(I::AbstractMatrix; S1=1)
     times_rates = _get_rate_over_t(Float32.(I)) .* Float32[1 S1]
     times = times_rates[:, 1]
@@ -36,9 +46,11 @@ function generate_dosing_callback(I::AbstractMatrix; S1=1)
         return t ∈ times
     end
     function affect!(integrator)
-         # Here we assume that only a single event happens at each t, which is reasonable.
+        # Here we assume that only a single event happens at each t, which is reasonable.
+        if !(integrator.t ∈ times) return end
+    
         rate = rates[findfirst(isequal(integrator.t), times)]
-        integrator.p[end, :] .= rate
+        @ignore_derivatives integrator.p[end, :] .= rate
     end
     return DiscreteCallback(condition, affect!; save_positions=(false, false))
 end

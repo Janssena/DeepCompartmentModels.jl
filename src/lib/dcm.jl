@@ -8,19 +8,17 @@ include("population.jl");
 include("objectives.jl");
 include("constrain.jl");
 
-
-"""
-Might make sense to write init_params function for objective functions. This way
-we can just run init_params(model) -> init_params(ann, objective), which could
-also initialize in-place to allow re-training.
-"""
-
-"""
-An abstract DE model has a common way of solving the ODE. One thing it must have 
-that is not enforced here is a dv_compartment variable.
-"""
 abstract type AbstractDEModel{O,D,M,P} <: AbstractModel{O,M,P} end
 
+"""
+    DeepCompartmentModel{O,D,M,P,R}
+
+Model architecture originally described in [janssen2022]. Uses a Neural Network 
+to learn the relationship between the covariates and the parameters of a system 
+of differential equations, for example describing a compartment model.
+\\
+[janssen2022] Janssen, Alexander, et al. "Deep compartment models: a deep learning approach for the reliable prediction of time‐series data in pharmacokinetic modeling." CPT: Pharmacometrics & Systems Pharmacology 11.7 (2022): 934-945.
+"""
 struct DeepCompartmentModel{O<:AbstractObjective,D<:AbstractDEProblem,M<:Lux.AbstractExplicitLayer,P,R<:Random.AbstractRNG} <: AbstractDEModel{O,D,M,P}
     objective::O
     problem::D
@@ -28,36 +26,79 @@ struct DeepCompartmentModel{O<:AbstractObjective,D<:AbstractDEProblem,M<:Lux.Abs
     p::P
     dv_compartment::Int
     rng::R
-    # Constructors
-    function DeepCompartmentModel(problem_::D, ann::M, p::P; rng::R=Random.default_rng(), objective::O=SSE(), dv_compartment::Int=1) where {O<:AbstractObjective,D<:AbstractDEProblem,M,P,R}
-        !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
-        if !(problem_ isa AbstractODEProblem)
-            println("[info] DeepCompartmentModels.jl is not tested using problems of type $(D). Be wary of any errors.")
-        end
-        problem = (Base.typename(typeof(problem_)).wrapper)(problem_.f, Float32.(problem_.u0), Float32.(problem_.tspan), Float32[])
-        new{O,typeof(problem),M,P,R}(objective, problem, ann, p, dv_compartment, rng)
+end
+# Constructors
+"""
+    DeepCompartmentModel(prob, ann, p; rng, objective, dv_compartment)
+
+# Arguments
+- `prob::AbstractDEProblem`: DE problem describing the dynamical system.
+- `ann::AbstractExplicitLayer`: Lux model representing the ann.
+- `p`: Model parameters, containing all model parameters.
+- `rng`: Randomizer used for initialization of the parameters.
+- `objective::AbstractObjective`: Objective function to optimize. Currently supports SSE, LogLikelihood, and VariationalELBO (for mixed effects estimation). Default = SSE.
+- `dv_compartment::Int`: The index of the compartment for the prediction of the dependent variable. Default = 1.
+"""
+function DeepCompartmentModel(problem_::D, ann::M, p::P; rng::R=Random.default_rng(), objective::O=SSE(), dv_compartment::Int=1) where {O<:AbstractObjective,D<:AbstractDEProblem,M,P,R}
+    !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
+    if !(problem_ isa AbstractODEProblem)
+        println("[info] DeepCompartmentModels.jl is not tested using problems of type $(D). Be wary of any errors.")
     end
-    # For convenience:
-    # Using ODEFunc instead of ODEProblem
-    function DeepCompartmentModel(ode_f::Function, num_compartments::Integer, args...; kwargs...)
-        problem = ODEProblem(ode_f, zeros(Float32, num_compartments), (-0.1f0, 1.f0), Float32[])
-        return DeepCompartmentModel(problem, args...; kwargs...)
-    end
-    # Auto-init parameters
-    function DeepCompartmentModel(problem::D, ann::M; rng=Random.default_rng(), objective=SSE(), kwargs...) where {D<:AbstractDEProblem,M}
-        !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
-        p = init_params(rng, objective, ann)
-        DeepCompartmentModel(problem, ann, p; rng, objective, kwargs...)
-    end
-    # with ps and st
-    function DeepCompartmentModel(problem::D, ann::M, ps::NamedTuple, st::NamedTuple; rng::R=Random.default_rng(), objective::O=SSE(), kwargs...) where {O<:AbstractObjective,D<:AbstractDEProblem,M,R}
-        !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
-        p = init_params(rng, objective, ps, st)
-        DeepCompartmentModel(problem, ann, p; rng, kwargs...)
-    end
+    problem = (Base.typename(typeof(problem_)).wrapper)(problem_.f, Float32.(problem_.u0), Float32.(problem_.tspan), Float32[])
+    new{O,typeof(problem),M,P,R}(objective, problem, ann, p, dv_compartment, rng)
+end
+"""
+    DeepCompartmentModel(ode_f, num_compartments, args...; kwargs...)
+
+Convenience constructor creating an ODE model based on the user supplied 
+`ode_f` function. The number of compartments needs to be supplied in order 
+to correctly initialize the ODEProblem.
+
+# Arguments
+- `ode_f::AbstractDEProblem`: DE problem describing the dynamical system.
+- `num_compartments::Int`: Number of partial differential equations in the ODE.
+"""
+function DeepCompartmentModel(ode_f::Function, num_compartments::Integer, args...; kwargs...)
+    problem = ODEProblem(ode_f, zeros(Float32, num_compartments), (-0.1f0, 1.f0), Float32[])
+    return DeepCompartmentModel(problem, args...; kwargs...)
+end
+"""
+    DeepCompartmentModel(problem, ann; kwargs...)
+
+Convenience constructor also initializing the model parameters.
+
+# Arguments
+- `prob::AbstractDEProblem`: DE problem describing the dynamical system.
+- `ann::AbstractExplicitLayer`: Lux model representing the ann.
+"""
+function DeepCompartmentModel(problem::D, ann::M; rng=Random.default_rng(), objective=SSE(), kwargs...) where {D<:AbstractDEProblem,M}
+    !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
+    p = init_params(rng, objective, ann)
+    DeepCompartmentModel(problem, ann, p; rng, objective, kwargs...)
+end
+"""
+    DeepCompartmentModel(problem, ann, ps, st; kwargs...)
+
+Convenience constructor initializing the remaining model parameters with user 
+initialized neural network weights `ps` and state `st`.
+
+# Arguments
+- `prob::AbstractDEProblem`: DE problem describing the dynamical system.
+- `ann::AbstractExplicitLayer`: Lux model representing the ann.
+- `ps`: Initial parameters for the neural network.
+- `st`: Initial state for the neural network.
+"""
+function DeepCompartmentModel(problem::D, ann::M, ps::NamedTuple, st::NamedTuple; rng::R=Random.default_rng(), objective::O=SSE(), kwargs...) where {O<:AbstractObjective,D<:AbstractDEProblem,M,R}
+    !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
+    p = init_params(rng, objective, ps, st)
+    DeepCompartmentModel(problem, ann, p; rng, kwargs...)
 end
 
-"""Alias"""
+"""
+    DCM(args...; kwargs...)
+
+Alias for DeepCompartmentModel(args...; kwargs...)
+"""
 DCM(args...; kwargs...) = DeepCompartmentModel(args...; kwargs...)
 
 
@@ -89,7 +130,21 @@ function forward_ode(model::AbstractDEModel, individual::AbstractIndividual, z�
     return get_dv ? sol[model.dv_compartment, :] : sol
 end
 
-"""Note: this does not use z."""
+"""
+    forward(model::DeepCompartmentModel, container, p; full, interpolate, get_dv, saveat, sensealg)
+
+Predicts the differential equation parameters and returns the solution.
+
+# Arguments
+- `model::DeepCompartmentModel`: The model to use to perform the prediction.
+- `container::Union{AbstractIndividual, Population}`: A population or Individual to perform the predictions for.
+- `p`: Model parameters. Default = model.p.
+- `full`: Return the output for all model compartments.
+- `interpolate`: Saves additional time points to return a continuous solution of the DE.
+- `get_dv`: Directly returns the predictions for the dv compartment.
+- `saveat`: Custom time points to save the solution.
+- `sensealg`: Sensitivity algorithm to use for gradient calculations.
+"""
 function forward(model::DeepCompartmentModel, container::Union{AbstractIndividual, Population}, p; kwargs...) # Everything else → pass z directly
     ζ_, st = predict_typ_parameters(model, container, p)
     ζ = construct_p(ζ_, container)
