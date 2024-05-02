@@ -2,6 +2,7 @@ import Statistics: Statistics, std
 import LinearAlgebra: Diagonal
 import Random: AbstractRNG, rand!
 import Bijectors
+import Lux
 
 using Distributions
 using PartialFunctions

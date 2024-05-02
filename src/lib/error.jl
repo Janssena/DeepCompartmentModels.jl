@@ -1,6 +1,7 @@
 # TODO: Put error model logic here.
 import Distributions: Sampleable
 import Statistics
+import Random
 
 abstract type ErrorModel end
 abstract type ExplicitErrorModel <: ErrorModel end

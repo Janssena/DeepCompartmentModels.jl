@@ -16,9 +16,6 @@ struct BasicIndividual{I<:Union{Integer, AbstractString}, X, T, Y<:AbstractVecto
     callback::C
     initial::Y
     eta::Y
-    function BasicIndividual(;x::X, t::T, y::Y, callback::C, initial::Y, eta::Y, id::I = "") where {I,X,T,Y,C} 
-        return new{I,X,T,Y,C}(id, x, t, y, callback, initial, eta)
-    end
 end
 # Constructors, TODO: set common type (default = Float32) -> how to do this for the callback?
 """
