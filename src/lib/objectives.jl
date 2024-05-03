@@ -32,7 +32,7 @@ function objective(::SSE, model, container::Union{AbstractIndividual, Population
 end
 
 sse(y::T, ŷ::T) where T<:AbstractVector{<:AbstractVector} = sum(abs2, reduce(vcat, y - ŷ))
-sse(y::AbstractVector{<:AbstractVector}, ŷ::AbstractVector) = sum(abs2, reduce(vcat, y) - ŷ)
+sse(y::AbstractVector{<:AbstractVector}, ŷ::AbstractVector{<:Real}) = sum(abs2, reduce(vcat, y) - ŷ)
 
 # TODO: Potentially add a objective(::SSE, ŷ::AbstractVector{<:Real}) and objective(::SSE, ŷ::AbstractVector{<:AbstractVector}). The latter can do only a single reduce
 

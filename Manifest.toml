@@ -2,7 +2,7 @@
 
 julia_version = "1.10.2"
 manifest_format = "2.0"
-project_hash = "5fec537aa0aa753a32b15df33e041c25ea13e4c7"
+project_hash = "0b1a47e726bc1347abc8dd07d8b2662aac81d6fd"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "016833eb52ba2d6bea9fcb50ca295980e728ee24"
@@ -1785,9 +1785,9 @@ version = "1.1.1"
 
 [[deps.ReverseDiff]]
 deps = ["ChainRulesCore", "DiffResults", "DiffRules", "ForwardDiff", "FunctionWrappers", "LinearAlgebra", "LogExpFunctions", "MacroTools", "NaNMath", "Random", "SpecialFunctions", "StaticArrays", "Statistics"]
-git-tree-sha1 = "d1235bdd57a93bd7504225b792b867e9a7df38d5"
+git-tree-sha1 = "cc6cd622481ea366bb9067859446a8b01d92b468"
 uuid = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
-version = "1.15.1"
+version = "1.15.3"
 
 [[deps.Rmath]]
 deps = ["Random", "Rmath_jll"]

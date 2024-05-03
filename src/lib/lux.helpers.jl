@@ -175,7 +175,7 @@ function SingleHeadedBranch(covariate_idx::Union{AbstractVector{<:Int}, Int}, ne
     )
 end
 
-# TODO: There is a problem when predicting in a mulit-branch model when passing a vector (i.e. when working with a single individual)
+# TODO: There is a problem when predicting in a multi-branch model when passing a vector (i.e. when working with a single individual)
 
 """
     MultiHeadedBranch(covariate_idx, neurons, heads; activation, init_bias).
@@ -269,7 +269,7 @@ y = f(x) ./ f(anchor)
 - `anchor`: Unnormalized covariate value to which the output is "anchored", i.e. f(anchor) = 1.
 - `x`: Normalized dummy input to the branch. 
 """
-function interpret_branch(ann::LuxCore.AbstractExplicitContainerLayer, ps, st, covariate_idx, anchor; x = 0:0.01:1)
+function interpret_branch(ann::Lux.AbstractExplicitContainerLayer, ps, st, covariate_idx, anchor; x = 0:0.01:1)
     branch_layer = findall(layer -> typeof(layer) <: BranchLayer, ann.layers)
     if length(branch_layer) > 1
         throw(ErrorException("Multiple BranchLayers detected. The interpret_branch function only accepts model with a single BranchLayer"))

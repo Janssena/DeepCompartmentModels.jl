@@ -99,6 +99,8 @@ end
 
 Base.showarg(io::IO, ::Population{T,I}, toplevel) where {T,I} = print(io, "Population{$(T.name.name), $(I.name.name)}")
 
+# TODO: taking multiple indexes from Population should return Population
+
 Base.size(pop::Population) = (pop.count,)
 Base.IndexStyle(::Type{<:Population}) = IndexLinear()
 Base.getindex(pop::Population, i::Int) = pop.indvs[i]
