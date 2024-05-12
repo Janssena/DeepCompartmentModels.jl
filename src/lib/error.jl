@@ -115,5 +115,5 @@ function Statistics.std(model::M, prediction::AbstractVector) where M<:AbstractM
     if model.objective isa SSE 
         return throw(ErrorException("Models fit using the SSE objective have implicit error. Cannot obtain standard deviation of prediction."))
     end
-    return sqrt.(diag(variance(model.objective.error, constrain(model.p), prediction)))
+    return sqrt.(diag(variance(model.objective.error, constrain(model.objective, model.p), prediction)))
 end

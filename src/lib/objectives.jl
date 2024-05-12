@@ -25,10 +25,10 @@ struct SSE <: FixedObjective end
 objective(model::M, args...) where {M<:AbstractModel} = objective(model.objective, model, args...)
 
 """Expects that forward returns a one-dimensional array"""
-function objective(::SSE, model, container::Union{AbstractIndividual, Population}, p_)
-    p = constrain(p_)
+function objective(obj::SSE, model, container::Union{AbstractIndividual, Population}, p_)
+    p = constrain(obj, p_)
     ŷ, st = forward_adjoint(model, container, p)
-    return sse(container.y, ŷ)
+    return sse(get_y(container), ŷ)
 end
 
 sse(y::T, ŷ::T) where T<:AbstractVector{<:AbstractVector} = sum(abs2, reduce(vcat, y - ŷ))
@@ -57,7 +57,7 @@ end
 
 """Expects that forward returns a one-dimensional array"""
 function objective(obj::LogLikelihood{D,E}, model::M, container::Union{AbstractIndividual, Population}, p_) where {D,E,M<:AbstractModel}
-    p = constrain(p_)
+    p = constrain(obj, p_)
     ŷ, st = forward_adjoint(model, container, p)
     σ² = variance(obj.error, p, ŷ)
     return -ll(D, ŷ, σ², container.y)
@@ -110,7 +110,7 @@ init_params!(model) = update!(model, init_params(model.rng, model.objective, mod
 init_params(rng, objective, ann::Lux.AbstractExplicitLayer) = init_params(rng, objective, Lux.setup(rng, ann)...)
 
 function init_params(rng, objective, ps::NamedTuple, st::NamedTuple)
-    p = (weights = ps, st = st)
+    p = (weights = ps,)
     # Init error model
     if !(objective isa SSE)
         p = merge(p, (error = objective.error.init_f(rng, objective.error), ))
@@ -120,7 +120,7 @@ function init_params(rng, objective, ps::NamedTuple, st::NamedTuple)
         p = merge(p, objective.init_prior(rng, length(objective.idxs)))
     end
     # Init objective-specific parameters:
-    return init_params(rng, objective, p)
+    return init_params(rng, objective, p), st
 end
 
 init_params(::Random.AbstractRNG, ::O, p::NamedTuple) where {O<:AbstractObjective} = p

@@ -1,5 +1,7 @@
-abstract type AbstractModel{O,M,P} end
-abstract type AbstractDEModel{O,D,M,P} <: AbstractModel{O,M,P} end
+import DifferentialEquations.SciMLBase: AbstractDEProblem
+
+abstract type AbstractModel{O,M,P,S} end
+abstract type AbstractDEModel{O,D,M,P,S} <: AbstractModel{O,M,P,S} end
 
 """
     predict(...)
@@ -15,7 +17,7 @@ forward(model::M, container::Union{AbstractIndividual, Population}, args...; kwa
 
 Performs an in-place update of model parameters when P <: NamedTuple.
 """
-function update!(model::AbstractModel{O,M,P}, p::P) where {O,M,P<:NamedTuple}
+function update!(model::AbstractModel{O,M,P,S}, p::P) where {O,M,P<:NamedTuple,S}
     Lux.fmap((x,y) -> x .= y, model.p, p)
     return nothing
 end
@@ -28,7 +30,7 @@ parameters are stored in the model. Can be passed a callback function that can
 be used to monitor training. The callback is called with the current epoch and 
 loss after gradient calculation and before updating model parameters.
 """
-function fit!(model::AbstractModel{O,M,P,S}, population::Population, opt, epochs::Int; callback=(e,l) -> nothing) where {O<:FixedObjective,M,P}
+function fit!(model::AbstractModel{O,M,P,S}, population::Population, opt, epochs::Int; callback=(e,l) -> nothing) where {O<:FixedObjective,M,P,S}
     opt_state = Optimisers.setup(opt, model.p)
     for epoch in 1:epochs
         loss, back = Zygote.pullback(p -> objective(model, population, p), model.p)

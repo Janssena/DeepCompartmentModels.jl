@@ -3,7 +3,10 @@ import Zygote
 import Plots
 import CSV
 
+include("src/lib/error.jl");
+include("src/lib/model.jl");
 include("src/lib/nn.jl");
+include("src/lib/lux.helpers.jl");
 
 using Lux
 using DataFrames
@@ -23,8 +26,8 @@ population = Population(indvs)
 
 ann = Chain(
     Normalize([200, 100, 1, 200, 144]),
-    Dense(5, 16, swish), 
-    Chain(Dense(16, 4, swish), 
+    Dense(5, 12, swish), 
+    Chain(Dense(12, 4, swish), 
     Dense(4, 1, softplus))
 )
 
@@ -33,14 +36,12 @@ objective(model_SSE, population)
 
 opt = Optimisers.ADAM(1e-2)
 opt_state = Optimisers.setup(opt, model_SSE.p)
-
 for epoch in 1:10_000
-    loss, back = Zygote.pullback(p -> objective(model_SSE, population, p), model_SSE.p);
-    grad = first(back(1))
+    loss, grad = Zygote.withgradient(p -> objective(model_SSE, population, p), model_SSE.p);
     if epoch == 1 || epoch % 500 == 0
         println("Epoch $epoch: loss = $loss")
     end
-    opt_state, p_opt = Optimisers.update(opt_state, model_SSE.p, grad)
+    opt_state, p_opt = Optimisers.update(opt_state, model_SSE.p, first(grad))
     update!(model_SSE, p_opt)
 end
 
@@ -55,14 +56,12 @@ objective(model_LL, population)
 
 opt_LL = Optimisers.ADAM(1e-2)
 opt_state_LL = Optimisers.setup(opt_LL, model_LL.p)
-
 for epoch in 1:10_000
-    loss, back = Zygote.pullback(p -> objective(model_LL, population, p), model_LL.p);
-    grad = first(back(1))
+    loss, grad = Zygote.withgradient(p -> objective(model_LL, population, p), model_LL.p);
     if epoch == 1 || epoch % 500 == 0
         println("Epoch $epoch: loss = $loss")
     end
-    opt_state_LL, p_opt = Optimisers.update(opt_state_LL, model_LL.p, grad)
+    opt_state_LL, p_opt = Optimisers.update(opt_state_LL, model_LL.p, first(grad))
     update!(model_LL, p_opt)
 end
 
