@@ -1,3 +1,4 @@
+import Bijectors: inverse, VecCorrBijector, VecCholeskyBijector
 import Zygote.ChainRules: @ignore_derivatives
 import Random
 
@@ -28,7 +29,7 @@ function constrain(p_::NamedTuple)
 
     if :omega in keys(p_)
         ω = softplus.(p_.omega.var) # TODO: rename this to sigma or similar, e.g. (prior = (omega = ..., corr = ...), )
-        C = inverse(Bijectors.VecCorrBijector())(p_.omega.corr)
+        C = inverse(VecCorrBijector())(p_.omega.corr)
         p = merge(p, (omega = Symmetric(ω .* C .* ω'),))
     end
     return p
@@ -42,7 +43,7 @@ this function returns `μ` and standard deviations `σ`.
 """
 constrain_phi(::Type{MeanField}, 𝜙::NamedTuple) = (mean = 𝜙.mean, sigma = softplus.(𝜙.sigma))
 
-sigma_corr_to_L(sigma, corr) = sigma .* inverse(Bijectors.VecCholeskyBijector(:L))(corr).L
+sigma_corr_to_L(sigma, corr) = sigma .* inverse(VecCholeskyBijector(:L))(corr).L
 
 """
     constrain_phi(::FullRank, 𝜙::NamedTuple)

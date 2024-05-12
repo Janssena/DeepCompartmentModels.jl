@@ -20,6 +20,48 @@ function update!(model::AbstractModel{O,M,P}, p::P) where {O,M,P<:NamedTuple}
     return nothing
 end
 
+"""
+    fit!(model::AbstractModel, population::Population, opt, epochs; callback)
+
+Fits the model in place to the data from the population. Updated model 
+parameters are stored in the model. Can be passed a callback function that can 
+be used to monitor training. The callback is called with the current epoch and 
+loss after gradient calculation and before updating model parameters.
+"""
+function fit!(model::AbstractModel{O,M,P,S}, population::Population, opt, epochs::Int; callback=(e,l) -> nothing) where {O<:FixedObjective,M,P}
+    opt_state = Optimisers.setup(opt, model.p)
+    for epoch in 1:epochs
+        loss, back = Zygote.pullback(p -> objective(model, population, p), model.p)
+        grad = first(back(1))
+        callback(epoch, loss)
+        opt_state, new_p = Optimisers.update(opt_state, model.p, grad)
+        update!(model, new_p)
+    end
+    return nothing
+end
+
+# TODO: allow for multiple optimizers (one for p and one for phi)
+# TODO: allow passing previous phi
+function fit!(model::AbstractModel{O,M,P}, population::Population, opt, epochs::Int; callback=(e,l) -> nothing) where {O<:VariationalELBO,M,P}
+    phi = model.objective.init_phi(model, population)
+
+    if typeof(model.objective.approx) <: SampleAverage
+        init_samples!(model.objective, population)
+    end # TODO: make this optional
+
+    opt_state = Optimisers.setup(opt, model.p)
+    opt_state_phi = Optimisers.setup(opt, phi)
+    for epoch in 1:epochs
+        loss, back = Zygote.pullback((p, phi) -> objective(model, population, p, phi), model.p, phi)
+        grad_p, grad_phi = back(1)
+        callback(epoch, loss)
+        opt_state, new_p = Optimisers.update(opt_state, model.p, grad_p)
+        opt_state_phi, phi = Optimisers.update(opt_state_phi, phi, grad_phi) # TODO: Natural Gradient descent.
+        update!(model, new_p)
+    end
+    return phi
+end
+
 # forward_ode → solve ode
 forward_ode(model::AbstractDEModel, population::Population, z::AbstractMatrix; kwargs...) = forward_ode.((model,), population, eachcol(z); kwargs...)
 forward_ode(model::AbstractDEModel, population::Population, z::AbstractVector{<:AbstractMatrix}; kwargs...) = forward_ode.((model,), population, z; kwargs...)

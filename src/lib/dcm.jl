@@ -43,7 +43,7 @@ function DeepCompartmentModel(problem_::D, ann::M, p::P; rng::R=Random.default_r
         println("[info] DeepCompartmentModels.jl is not tested using problems of type $(D). Be wary of any errors.")
     end
     problem = (Base.typename(typeof(problem_)).wrapper)(problem_.f, Float32.(problem_.u0), Float32.(problem_.tspan), Float32[])
-    new{O,typeof(problem),M,P,R}(objective, problem, ann, p, dv_compartment, rng)
+    DeepCompartmentModel{O,typeof(problem),M,P,R}(objective, problem, ann, p, dv_compartment, rng)
 end
 """
     DeepCompartmentModel(ode_f, num_compartments, args...; kwargs...)
@@ -172,114 +172,5 @@ function elbo(model::DeepCompartmentModel, individual::AbstractIndividual, eta_m
     Σ = variance(model, p, ŷ)
     return logpdf(MvNormal(ŷ, Σ), individual.y) + logpdf(MvNormal(zero(η), p.omega), η) - logpdf(q, η)
 end
-
-
-# """Static Individual"""
-# function predict_parameters(model::DeepCompartmentModel, individual::AbstractIndividual{I,X,T,Y,C}, p; kwargs...) where {I,X<:AbstractVector,T<:AbstractVector,Y,C}
-#     ζ, st = model.ann(individual.x, p.weights, p.st)
-#     return [construct_z(model.objective, ζ); 0], st
-# end
-
-# """TimeVariable Individual"""
-# function predict_parameters(model::DeepCompartmentModel, individual::AbstractIndividual{I,X,T,Y,C}, p::NamedTuple; kwargs...) where {I,X<:AbstractMatrix,T<:NamedTuple,Y,C}
-#     ζ, st = model.ann(individual.x, p.weights, p.st)
-#     z_ = construct_z(model.objective, ζ)
-#     return vcat(individual.t.x, z_, zero.(individual.t.x)), st
-# end
-
-# """Static population"""
-# function predict_parameters(model::DeepCompartmentModel, population::Population{T,I}, p::NamedTuple; kwargs...) where {T<:Static,I}
-#     ζ, st = model.ann(population.x, p.weights, p.st)
-#     z_ = construct_z(model.objective, ζ)
-#     return vcat(z_, zeros(eltype(z_), 1, size(z_, 2))), st
-# end
-
-# # function forward(model::DeepCompartmentModel, individual::AbstractIndividual{I,X,T,Y,C}, p::NamedTuple; kwargs...) where {I,X<:AbstractVector,T<:AbstractVector,Y,C}
-# #     ζ, st = model.ann(individual.x, p.weights, p.st)
-# #     z = [construct_z(model.objective, ζ); 0]
-# #     return forward(model, individual, z; kwargs...), st
-# # end
-
-# # function forward(model::DeepCompartmentModel, individual::AbstractIndividual{I,X,T,Y,C}, p::NamedTuple; kwargs...) where {I,X<:AbstractMatrix,T<:NamedTuple,Y,C}
-# #     ζ, st = model.ann(individual.x, p.weights, p.st)
-# #     z_ = construct_z(model.objective, ζ)
-# #     z = vcat(individual.t.x, z_, zero.(individual.t.x))
-# #     return forward(model, individual, z; kwargs...), st
-# # end
-
-# function forward(model::DeepCompartmentModel, population::Population{T,I}, p::NamedTuple; kwargs...) where {T<:Static,I}
-#     ζ, st = model.ann(population.x, p.weights, p.st)
-#     z_ = construct_z(model.objective, ζ)
-#     z = vcat(z_, zeros(eltype(z_), 1, size(z_, 2)))
-#     return forward.((model,), population, eachcol(z); kwargs...), st
-# end
-
-# function forward(model::DeepCompartmentModel, population::Population{T,I}, p::NamedTuple; kwargs...) where {T<:TimeVariable,I}
-#     res = model.ann.(getfield.(population, :x), (p.weights,), (p.st,))
-#     ζ = first.(res)
-#     st = last(res[end])
-#     z_ = construct_z.((model.objective,), ζ)
-#     ts = getfield.(getfield.(population, :t), :x)
-#     z = vcat.(ts, z_, zero.(ts))
-#     return forward.((model,), population, z; kwargs...), st
-# end
-
-# """Solves the ODE based on the supplied DCM, individual, and parameter vector"""
-# function forward(model::AbstractDEModel, individual::AbstractIndividual, zᵢ::AbstractVecOrMat; get_dv::Bool=false, sensealg=nothing, full::Bool=false, interpolate::Bool=false, saveat_ = is_timevariable(individual) ? individual.t.y : individual.t)
-#     u0 = isempty(individual.initial) ? model.problem.u0 : individual.initial
-#     saveat = interpolate ? empty(saveat_) : saveat_
-#     save_idxs = full ? (1:length(u0)) : model.dv_compartment
-#     prob = remake(model.problem, u0 = u0, tspan = (model.problem.tspan[1], maximum(saveat_)), p = zᵢ)
-#     interpolate && (individual.callback.save_positions .= 1)
-#     sol = solve(prob, Tsit5(),
-#         save_idxs = save_idxs, saveat = saveat, callback=individual.callback, 
-#         tstops=individual.callback.condition.times, sensealg=sensealg
-#     )
-#     interpolate && (individual.callback.save_positions .= 0)
-#     return get_dv ? sol[model.dv_compartment, :] : sol
-# end
-
-# """Specific function used in the objective"""
-# function forward_adjoint(model::DeepCompartmentModel, container::Union{AbstractIndividual, Population}, p::NamedTuple)
-#     sol, st = forward(model, container, p; get_dv=true, full=true, sensealg=ForwardDiffSensitivity(;convert_tspan=true))
-#     return sol, st
-# end
-
-# get_sol_idx(sol, i) = sol[i, :]
-# get_sol_idx(sol::AbstractVector, i) = sol[i, :]
-
-# function forward(model::DeepCompartmentModel, population::Population, p::NamedTuple; kwargs...)
-#     ζ, st = model.ann(population.x, p.weights, p.st)
-#     return forward.((model,), population, eachcol(ζ); kwargs...), st
-# end
-
-# function forward_adjoint(model::DeepCompartmentModel, population::Population, p::NamedTuple; kwargs...)
-#     if is_timevariable(population)
-#         res = model.ann.(getfield.(population, :x), (p.weights,), (p.st,))
-#         ζ = first.(res) # Vector{<:Matrix}
-#         st = last(res[end])
-#         return forward_adjoint.((model,), population, ζ), st
-#     else
-#         ζ, st = model.ann(population.x, p.weights, p.st)
-#         return forward_adjoint.((model,), population, eachcol(ζ)), st
-#     end
-#     # return [vec(forward(model, population[i], ζ[:, i]; kwargs...)) for i in eachindex(population)], st
-#     # return vec.(forward.((model,), population, eachcol(ζ); kwargs...)), st
-# end
-
-# function forward_adjoint(model::DeepCompartmentModel, individual::AbstractIndividual, ζᵢ::AbstractVecOrMat)
-#     # TODO: handle time-dependent, i.e. ζᵢ isa AbstractMatrix
-#     saveat = is_timevariable(individual) ? individual.t.y : individual.t
-#     u0 = @ignore_derivatives isempty(individual.initial) ? model.problem.u0 : individual.initial
-#     prob = remake(model.problem, u0 = u0, tspan = (model.problem.tspan[1], maximum(saveat)), p = [ζᵢ; 0])
-
-#     sol = solve(prob, Tsit5(),
-#         saveat = saveat, callback=individual.callback, 
-#         tstops=individual.callback.condition.times,
-#         sensealg=ForwardDiffSensitivity(; convert_tspan=true)
-#     )
-
-#     return sol[model.dv_compartment, :]
-# end
 
 Base.show(io::IO, dcm::DeepCompartmentModel) = print(io, "DeepCompartmentModel{$(dcm.problem.f.f), $(dcm.objective)}")

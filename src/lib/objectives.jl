@@ -190,3 +190,15 @@ Base.show(io::IO, ::SSE) = print(io, "SSE")
 Base.show(io::IO, obj::LogLikelihood{D,E}) where {D,E} = print(io, "LogLikelihood{$(D.name.name), $(obj.error)}")
 Base.show(io::IO, obj::VariationalELBO{V,A,E,F1,F2}) where {V,A,E,F1,F2} = print(io, "VariationalELBO{$(V.name.name), $(obj.approx), $(obj.error)}")
 Base.show(io::IO, obj::O) where {O<:AbstractObjective} = print(io, "$(O.name.name){$(obj.error)}")
+
+adapt!(::Population, ::AbstractModel{O,M,P}) where {O<:FixedObjective,M,P} = nothing
+function adapt!(population::Population, model::AbstractModel{O,M,P}) where {O<:MixedObjective,M,P} 
+    adapt!.(population, (model,))
+    return nothing
+end
+
+function adapt!(individual::AbstractIndividual, model::AbstractModel{O,M,P}) where {O<:MixedObjective,M,P} 
+    empty!(individual.eta)
+    push!(individual.eta, zeros(eltype(individual.eta), length(model.objective.idxs))...)
+    return nothing
+end
