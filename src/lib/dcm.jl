@@ -127,14 +127,13 @@ Predicts the differential equation parameters and returns the solution.
 - `saveat`: Custom time points to save the solution.
 - `sensealg`: Sensitivity algorithm to use for gradient calculations.
 """
-function forward(model::DeepCompartmentModel, container::Union{AbstractIndividual, Population}, p; kwargs...) # Everything else → pass z directly
+function forward(model::DeepCompartmentModel, container::Union{AbstractIndividual, Population}, p; get_dv=Val(false), kwargs...) # Everything else → pass z directly
     ζ_, st = predict_typ_parameters(model, container, p)
     ζ = construct_p(ζ_, container)
-    return forward_ode(model, container, ζ; kwargs...), st
+    return forward_ode(model, container, ζ, get_dv; kwargs...), st
 end
 
-
-forward_adjoint(model::DeepCompartmentModel, args...) = forward(model, args...; get_dv=true, full=true, sensealg=ForwardDiffSensitivity(;convert_tspan=true))
+forward_adjoint(model::DeepCompartmentModel, args...) = forward(model, args...; get_dv=Val(true), sensealg=ForwardDiffSensitivity(;convert_tspan=true))
 
 
 ##### Variational Inference:
@@ -165,10 +164,11 @@ function elbo(model, individual::AbstractIndividual, eta_mask, ζ::AbstractVecto
     return mean(elbo.((model,), (individual,), (eta_mask,), (ζ,), (p,), (q,), eachcol(η)))
 end
 
+# TODO: Calculate z_ one step before this to reduce inputs?
 function elbo(model::DeepCompartmentModel, individual::AbstractIndividual, eta_mask, ζ::AbstractVector, p::NamedTuple, q, η::AbstractVector)
     z_ = ζ .* exp.(eta_mask * η)
     z = construct_p(z_, individual)
-    ŷ = forward_ode(model, individual, z; get_dv=true, full=true, sensealg=ForwardDiffSensitivity(;convert_tspan=true))
+    ŷ = forward_ode(model, individual, z, Val(true); sensealg=ForwardDiffSensitivity(;convert_tspan=true))
     Σ = variance(model, p, ŷ)
     return logpdf(MvNormal(ŷ, Σ), individual.y) + logpdf(MvNormal(zero(η), p.omega), η) - logpdf(q, η)
 end

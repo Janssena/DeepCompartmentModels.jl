@@ -71,6 +71,9 @@ end
 struct Static end
 struct TimeVariable end
 
+get_t(individual::AbstractIndividual{I,X,T,Y,C}) where {I,X<:AbstractMatrix,T<:NamedTuple,Y,C} = individual.t.y 
+get_t(individual::AbstractIndividual) = individual.t
+
 """
     Population(AbstractIndividual[...])
 
@@ -101,20 +104,26 @@ Base.showarg(io::IO, ::Population{T,I}, toplevel) where {T,I} = print(io, "Popul
 
 # TODO: taking multiple indexes from Population should return Population
 
+Base.iterate(pop::Population, state=1) = state > pop.count ? nothing : (pop.indvs[state], state+1)
+Base.eltype(::Type{Population{T, I}}) where {T,I} = I
+Base.length(pop::Population) = pop.count
+
 Base.size(pop::Population) = (pop.count,)
 Base.IndexStyle(::Type{<:Population}) = IndexLinear()
 Base.getindex(pop::Population, i::Int) = pop.indvs[i]
-Base.broadcastable(pop::Population{T,I}) where {T,I<:AbstractIndividual} = pop.indvs
-function Base.getproperty(pop::Population{T1,<:AbstractIndividual{I,X,T,Y,C}}, f::Symbol) where {T1,I,X,T,Y,C}
-    error_text = "Directly getting $f when it is not an AbstractVector is not implemented. Try `getfield.(population, $f)` instead."
+
+function Base.getproperty(pop::Population, f::Symbol) 
     if f == :x
-        xs = getfield.(pop, :x)
-        return X <: AbstractVector ? stack(xs) : xs
-    elseif f == :y 
-        return Y <: AbstractVector ? getfield.(pop, :y) : throw(ErrorException(error_text))
+        return get_x(pop)
     elseif f == :t
-        return T2 <: AbstractVector ? getfield.(pop, :t) : throw(ErrorException(error_text))
-    else
+        return get_t(pop)
+    elseif f == :y
+        return get_y(pop)
+    else 
         return getfield(pop, f)
     end
 end
+
+get_x(population::Population) = stack([indv.x for indv in population.indvs])
+get_y(population::Population) = [indv.y for indv in population.indvs]
+get_t(population::Population) = [indv.t for indv in population.indvs]
