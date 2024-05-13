@@ -17,15 +17,16 @@ of differential equations, for example describing a compartment model.
 \\
 [janssen2022] Janssen, Alexander, et al. "Deep compartment models: a deep learning approach for the reliable prediction of time‐series data in pharmacokinetic modeling." CPT: Pharmacometrics & Systems Pharmacology 11.7 (2022): 934-945.
 """
-struct DeepCompartmentModel{O<:AbstractObjective,D<:AbstractDEProblem,M<:Lux.AbstractExplicitLayer,P,R<:Random.AbstractRNG} <: AbstractDEModel{O,D,M,P}
+struct DeepCompartmentModel{O<:AbstractObjective,D<:AbstractDEProblem,M<:Lux.AbstractExplicitLayer,P,S,R<:Random.AbstractRNG} <: AbstractDEModel{O,D,M,P,S}
     objective::O
     problem::D
     ann::M
     p::P
+    st::S
     dv_compartment::Int
     rng::R
 end
-# Constructors. TODO: Consider using StatefulLuxLayers and removing st from parameter vector.
+# Constructors. 
 """
     DeepCompartmentModel(prob, ann, p; rng, objective, dv_compartment)
 
@@ -37,13 +38,14 @@ end
 - `objective::AbstractObjective`: Objective function to optimize. Currently supports SSE, LogLikelihood, and VariationalELBO (for mixed effects estimation). Default = SSE.
 - `dv_compartment::Int`: The index of the compartment for the prediction of the dependent variable. Default = 1.
 """
-function DeepCompartmentModel(problem_::D, ann::M, p::P; rng::R=Random.default_rng(), objective::O=SSE(), dv_compartment::Int=1) where {O<:AbstractObjective,D<:AbstractDEProblem,M,P,R}
+function DeepCompartmentModel(problem_::D, ann::M, p::P, st::S; rng::R=Random.default_rng(), objective::O=SSE(), dv_compartment::Int=1) where {O<:AbstractObjective,D<:AbstractDEProblem,M,P,S,R}
     !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
     if !(problem_ isa AbstractODEProblem)
         println("[info] DeepCompartmentModels.jl is not tested using problems of type $(D). Be wary of any errors.")
     end
+    # Recreate problem using Float32
     problem = (Base.typename(typeof(problem_)).wrapper)(problem_.f, Float32.(problem_.u0), Float32.(problem_.tspan), Float32[])
-    DeepCompartmentModel{O,typeof(problem),M,P,R}(objective, problem, ann, p, dv_compartment, rng)
+    DeepCompartmentModel{O,typeof(problem),M,P,S,R}(objective, problem, ann, p, st, dv_compartment, rng)
 end
 """
     DeepCompartmentModel(ode_f, num_compartments, args...; kwargs...)
@@ -71,26 +73,26 @@ Convenience constructor also initializing the model parameters.
 """
 function DeepCompartmentModel(problem::D, ann::M; rng=Random.default_rng(), objective=SSE(), kwargs...) where {D<:AbstractDEProblem,M}
     !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
-    p = init_params(rng, objective, ann)
-    DeepCompartmentModel(problem, ann, p; rng, objective, kwargs...)
+    p, st = init_params(rng, objective, ann)
+    DeepCompartmentModel(problem, ann, p, st; rng, objective, kwargs...)
 end
-"""
-    DeepCompartmentModel(problem, ann, ps, st; kwargs...)
+# """
+#     DeepCompartmentModel(problem, ann, ps, st; kwargs...)
 
-Convenience constructor initializing the remaining model parameters with user 
-initialized neural network weights `ps` and state `st`.
+# Convenience constructor initializing the remaining model parameters with user 
+# initialized neural network weights `ps` and state `st`.
 
-# Arguments
-- `prob::AbstractDEProblem`: DE problem describing the dynamical system.
-- `ann::AbstractExplicitLayer`: Lux model representing the ann.
-- `ps`: Initial parameters for the neural network.
-- `st`: Initial state for the neural network.
-"""
-function DeepCompartmentModel(problem::D, ann::M, ps::NamedTuple, st::NamedTuple; rng::R=Random.default_rng(), objective::O=SSE(), kwargs...) where {O<:AbstractObjective,D<:AbstractDEProblem,M,R}
-    !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
-    p = init_params(rng, objective, ps, st)
-    DeepCompartmentModel(problem, ann, p; rng, kwargs...)
-end
+# # Arguments
+# - `prob::AbstractDEProblem`: DE problem describing the dynamical system.
+# - `ann::AbstractExplicitLayer`: Lux model representing the ann.
+# - `ps`: Initial parameters for the neural network.
+# - `st`: Initial state for the neural network.
+# """
+# function DeepCompartmentModel(problem::D, ann::M, ps::NamedTuple, st::NamedTuple; rng::R=Random.default_rng(), objective::O=SSE(), kwargs...) where {O<:AbstractObjective,D<:AbstractDEProblem,M,R}
+#     !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
+#     p = init_params(rng, objective, ps, st)
+#     DeepCompartmentModel(problem, ann, p; rng, kwargs...)
+# end
 
 """
     DCM(args...; kwargs...)
@@ -101,14 +103,14 @@ DCM(args...; kwargs...) = DeepCompartmentModel(args...; kwargs...)
 
 
 # predict_typ_parameters → simple forward
-predict_typ_parameters(model::DeepCompartmentModel, container::Union{AbstractIndividual, Population}, p) = model.ann(container.x, p.weights, p.st)
-predict_typ_parameters(model::DeepCompartmentModel, container::Population{T,I}, p) where {T<:TimeVariable,I} = model.ann.(container.x, (p.weights,), (p.st,))
+predict_typ_parameters(model::DeepCompartmentModel, container::Union{AbstractIndividual, Population}, p) = model.ann(get_x(container), p.weights, model.st)
+predict_typ_parameters(model::DeepCompartmentModel, container::Population{T,I}, p) where {T<:TimeVariable,I} = model.ann.(get_x(container), (p.weights,), (model.st,))
 # construct_p (add random effect & add padding: zeros for I and t for timevariable)
-construct_p(z::AbstractVector, ::AbstractIndividual) = [z; 0]
+construct_p(z::AbstractVector, ::AbstractIndividual) = [z; zero(eltype(z))]
 construct_p(z::AbstractMatrix, ::Population) = vcat(z, zeros(eltype(z), 1, size(z, 2))) # → run eachcol
 construct_p(z::AbstractMatrix, individual::AbstractIndividual) = vcat(individual.t.x, z, zeros(eltype(z), 1, size(z, 2)))
 function construct_p(z::AbstractVector{<:AbstractMatrix}, population::Population) 
-    ts = getfield.(getfield.(population, :t), :x)
+    ts = getfield.(getfield.(population, :t), :x) # TODO: likely slow?
     return vcat.(ts, z, zero.(ts))
 end
 
@@ -134,12 +136,12 @@ function forward(model::DeepCompartmentModel, container::Union{AbstractIndividua
 end
 
 forward_adjoint(model::DeepCompartmentModel, args...) = forward(model, args...; get_dv=Val(true), sensealg=ForwardDiffSensitivity(;convert_tspan=true))
+# TODO: Adding converted tspan is type unsafe, investigate InterpolatingAdjoint & GaussAdjoint
 
+##### Variational Inference: TODO: Make more general, i.e. something like forward_adjoint_with_sample(...)?
 
-##### Variational Inference:
-
-function objective(::VariationalELBO{V,A,E,F1,F2}, model::DeepCompartmentModel, population::Population{T,I}, p_::NamedTuple, phi_::NamedTuple) where {V,A,E,F1,F2,T<:Static,I}
-    p = constrain(p_)
+function objective(obj::VariationalELBO{V,A,E,F1,F2}, model::DeepCompartmentModel, population::Population{T,I}, p_::NamedTuple, phi_::NamedTuple) where {V,A,E,F1,F2,T<:Static,I}
+    p = constrain(obj, p_)
     phi = constrain_phi(V, phi_)
     ζ, st = predict_typ_parameters(model, population, p)
     eta_mask = @ignore_derivatives indicator(size(ζ, 1), model.objective.idxs)
@@ -170,7 +172,7 @@ function elbo(model::DeepCompartmentModel, individual::AbstractIndividual, eta_m
     z = construct_p(z_, individual)
     ŷ = forward_ode(model, individual, z, Val(true); sensealg=ForwardDiffSensitivity(;convert_tspan=true))
     Σ = variance(model, p, ŷ)
-    return logpdf(MvNormal(ŷ, Σ), individual.y) + logpdf(MvNormal(zero(η), p.omega), η) - logpdf(q, η)
+    return logpdf(MvNormal(ŷ, Σ), ignore_derivatives(individual.y)) + logpdf(MvNormal(zero(η), p.omega), η) - logpdf(q, η)
 end
 
 Base.show(io::IO, dcm::DeepCompartmentModel) = print(io, "DeepCompartmentModel{$(dcm.problem.f.f), $(dcm.objective)}")

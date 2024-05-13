@@ -124,6 +124,7 @@ function Base.getproperty(pop::Population, f::Symbol)
     end
 end
 
+get_x(individual::AbstractIndividual) = individual.x
 get_x(population::Population) = stack([indv.x for indv in population.indvs])
 get_y(population::Population) = @ignore_derivatives [indv.y for indv in population.indvs]
 get_t(population::Population) = [indv.t for indv in population.indvs]

@@ -44,7 +44,7 @@ end
 
 # TODO: allow for multiple optimizers (one for p and one for phi)
 # TODO: allow passing previous phi
-function fit!(model::AbstractModel{O,M,P}, population::Population, opt, epochs::Int; callback=(e,l) -> nothing) where {O<:VariationalELBO,M,P}
+function fit!(model::AbstractModel{O,M,P,S}, population::Population, opt, epochs::Int; callback=(e,l) -> nothing) where {O<:VariationalELBO,M,P,S}
     phi = model.objective.init_phi(model, population)
 
     if typeof(model.objective.approx) <: SampleAverage
@@ -69,7 +69,7 @@ forward_ode(model::AbstractDEModel, args...; kwargs...) = forward_ode(model.prob
 forward_ode(prob::AbstractDEProblem, container::Union{Population, AbstractIndividual}, zᵢ::AbstractVecOrMat; get_dv=Val(false), kwargs...) = forward_ode(prob, container, zᵢ, get_dv; kwargs...)
 forward_ode(prob::AbstractDEProblem, population::Population, z::AbstractMatrix, get_dv; kwargs...) = forward_ode.((prob,), population, eachcol(z), (get_dv,); kwargs...)
 forward_ode(prob::AbstractDEProblem, population::Population, z::AbstractVector{<:AbstractMatrix}, get_dv; kwargs...) = forward_ode.((prob,), population, z, (get_dv,); kwargs...)
-# Handle the case where we want the dv directly.
+# Handle the case where we want the dv directly. TODO: Make type safe
 forward_ode(prob::AbstractDEProblem, individual::AbstractIndividual, zᵢ::AbstractVecOrMat, ::Val{true}; dv_idx, kwargs...) = forward_ode(prob, individual, zᵢ, Val(false); kwargs...)[dv_idx, :]
 
 function forward_ode(problem::AbstractDEProblem, individual::AbstractIndividual, zᵢ::AbstractVecOrMat, ::Val{false}; dv_idx=1, sensealg=nothing, interpolate::Bool=false, saveat=get_t(individual))
