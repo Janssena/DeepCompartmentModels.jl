@@ -9,6 +9,13 @@ Returns the inverse of the softplus function such that: \\
 """
 softplus_inv(x::T) where {T<:Real} = log(exp(x) - one(T))
 
+constrain_error(p) = (sigma = softplus.(p.error.sigma), )
+function constrain_omega(p)
+    ω = softplus.(p.omega.var) # TODO: rename this to sigma or similar, e.g. (prior = (omega = ..., corr = ...), )
+    C = inverse(VecCorrBijector())(p.omega.corr)
+    return Symmetric(ω .* C .* ω')
+end
+
 """
     constrain(p::NamedTuple)
 
@@ -18,27 +25,6 @@ Transforms the unconstrained parameter vector to constrained space.
 `σ* ∈ ℝ → softplus(σ*) ∈ ℝ⁺` \\
 `ω, C  → ω ⋅ C ⋅ ω'`
 """
-# function constrain(::O, p_::NamedTuple) where O<:SSE
-#     p = (weights = p_.weights,)
-#     if :error in keys(p_) # Constrain ErrorModel parameters
-#         p = merge(p, (error = merge(p_.error, (sigma = softplus.(p_.error.sigma),)),))
-#     end
-
-#     if :omega in keys(p_)
-#         ω = softplus.(p_.omega.var) # TODO: rename this to sigma or similar, e.g. (prior = (omega = ..., corr = ...), )
-#         C = inverse(VecCorrBijector())(p_.omega.corr)
-#         p = merge(p, (omega = Symmetric(ω .* C .* ω'),))
-#     end
-#     return p
-# end
-
-constrain_error(p) = (sigma = softplus.(p.error.sigma), )
-function constrain_omega(p)
-    ω = softplus.(p.omega.var) # TODO: rename this to sigma or similar, e.g. (prior = (omega = ..., corr = ...), )
-    C = inverse(VecCorrBijector())(p.omega.corr)
-    return Symmetric(ω .* C .* ω')
-end
-
 constrain(::O, p::NamedTuple) where O<:SSE = p
 constrain(::O, p_::NamedTuple) where O<:LogLikelihood = (weights = p_.weights, error = constrain_error(p_))
 constrain(::O, p_::NamedTuple) where O<:MixedObjective = (weights = p_.weights, error = constrain_error(p_), omega = constrain_omega(p_))
