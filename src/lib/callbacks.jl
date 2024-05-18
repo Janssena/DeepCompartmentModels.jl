@@ -1,6 +1,3 @@
-import DifferentialEquations: DiscreteCallback
-import Zygote.ChainRules: @ignore_derivatives
-
 function _get_rate_over_t(Iᵢ::AbstractMatrix{T}) where T
     times, doses, rates, durations = eachcol(Iᵢ)
     # Set any rates of 0 to have taken one minute

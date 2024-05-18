@@ -1,6 +1,4 @@
 import Bijectors: inverse, VecCorrBijector, VecCholeskyBijector
-import Zygote.ChainRules: @ignore_derivatives
-import Random
 
 """
     softplus_inv(x::Real)

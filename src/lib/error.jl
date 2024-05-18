@@ -1,7 +1,4 @@
-# TODO: Put error model logic here.
-import Distributions: Sampleable
 import Statistics
-import Random
 
 abstract type ErrorModel end
 abstract type ExplicitErrorModel <: ErrorModel end
@@ -77,7 +74,7 @@ Initialization function for σ parameters based on the error model.
 """
 function init_sigma(rng::Random.AbstractRNG, error::E, ::Type{T}=Float32; init_dist::Sampleable=Uniform(0, 1)) where {E<:ExplicitErrorModel,T<:Real} 
     init = zeros(T, error.dims...)
-    rand!(rng, init_dist, init)
+    Random.rand!(rng, init_dist, init)
     init = max.(init, zero(T)) .+ T(1e-6)
     return (sigma = softplus_inv.(init),)
 end

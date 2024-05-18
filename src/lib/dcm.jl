@@ -1,13 +1,3 @@
-import DifferentialEquations.SciMLBase: AbstractDEProblem, AbstractODEProblem
-import SciMLSensitivity: ForwardDiffSensitivity
-import DifferentialEquations: Tsit5
-import Random
-import Lux
-
-include("population.jl");
-include("objectives.jl");
-include("constrain.jl");
-
 """
     DeepCompartmentModel{O,D,M,P,R}
 
@@ -17,7 +7,7 @@ of differential equations, for example describing a compartment model.
 \\
 [janssen2022] Janssen, Alexander, et al. "Deep compartment models: a deep learning approach for the reliable prediction of time‐series data in pharmacokinetic modeling." CPT: Pharmacometrics & Systems Pharmacology 11.7 (2022): 934-945.
 """
-struct DeepCompartmentModel{O<:AbstractObjective,D<:AbstractDEProblem,M<:Lux.AbstractExplicitLayer,P,S,R<:Random.AbstractRNG} <: AbstractDEModel{O,D,M,P,S}
+struct DeepCompartmentModel{O<:AbstractObjective,D<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractExplicitLayer,P,S,R<:Random.AbstractRNG} <: AbstractDEModel{O,D,M,P,S}
     objective::O
     problem::D
     ann::M
@@ -38,9 +28,9 @@ end
 - `objective::AbstractObjective`: Objective function to optimize. Currently supports SSE, LogLikelihood, and VariationalELBO (for mixed effects estimation). Default = SSE.
 - `dv_compartment::Int`: The index of the compartment for the prediction of the dependent variable. Default = 1.
 """
-function DeepCompartmentModel(problem_::D, ann::M, p::P, st::S; rng::R=Random.default_rng(), objective::O=SSE(), dv_compartment::Int=1) where {O<:AbstractObjective,D<:AbstractDEProblem,M,P,S,R}
+function DeepCompartmentModel(problem_::D, ann::M, p::P, st::S; rng::R=Random.default_rng(), objective::O=SSE(), dv_compartment::Int=1) where {O<:AbstractObjective,D<:SciMLBase.AbstractDEProblem,M,P,S,R}
     !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
-    if !(problem_ isa AbstractODEProblem)
+    if !(problem_ isa SciMLBase.AbstractODEProblem)
         println("[info] DeepCompartmentModels.jl is not tested using problems of type $(D). Be wary of any errors.")
     end
     # Recreate problem using Float32
@@ -71,7 +61,7 @@ Convenience constructor also initializing the model parameters.
 - `prob::AbstractDEProblem`: DE problem describing the dynamical system.
 - `ann::AbstractExplicitLayer`: Lux model representing the ann.
 """
-function DeepCompartmentModel(problem::D, ann::M; rng=Random.default_rng(), objective=SSE(), kwargs...) where {D<:AbstractDEProblem,M}
+function DeepCompartmentModel(problem::D, ann::M; rng=Random.default_rng(), objective=SSE(), kwargs...) where {D<:SciMLBase.AbstractDEProblem,M}
     !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
     p, st = init_params(rng, objective, ann)
     DeepCompartmentModel(problem, ann, p, st; rng, objective, kwargs...)
@@ -172,7 +162,8 @@ function elbo(model::DeepCompartmentModel, individual::AbstractIndividual, eta_m
     z = construct_p(z_, individual)
     ŷ = forward_ode(model, individual, z, Val(true); sensealg=ForwardDiffSensitivity(;convert_tspan=true))
     Σ = variance(model, p, ŷ)
-    return logpdf(MvNormal(ŷ, Σ), ignore_derivatives(individual.y)) + logpdf(MvNormal(zero(η), p.omega), η) - logpdf(q, η)
+    y = ignore_derivatives(individual.y)
+    return logpdf(MvNormal(ŷ, Σ), y) + logpdf(MvNormal(zero(η), p.omega), η) - logpdf(q, η)
 end
 
 Base.show(io::IO, dcm::DeepCompartmentModel) = print(io, "DeepCompartmentModel{$(dcm.problem.f.f), $(dcm.objective)}")

@@ -1,10 +1,3 @@
-import Random
-import Lux
-
-include("population.jl");
-include("objectives.jl");
-include("constrain.jl");
-
 """
     StandardNeuralNetwork(...)
 
@@ -27,7 +20,7 @@ end
 - `objective`: Objective fuction to optimize. Default = SSE.
 - `rng`: Randomizer. Default = default_rng().
 """
-function StandardNeuralNetwork(ann::M; objective::O=SSE(), rng::R=Random.default_rng()) where {O<:AbstractObjective,M,R<:AbstractRNG}
+function StandardNeuralNetwork(ann::M; objective::O=SSE(), rng::R=Random.default_rng()) where {O<:AbstractObjective,M,R<:Random.AbstractRNG}
     if !(objective isa SSE) && !(objective isa LogLikelihood)
         return throw(ErrorException("StandardNeuralNetwork model is not implemented for $O. Use `SSE()` or `LogLikelihood()` instead."))
     end
@@ -48,7 +41,7 @@ initialized neural network weights `ps` and state `st`.
 - `objective`: Objective fuction to optimize. Default = SSE.
 - `rng`: Randomizer. Default = default_rng().
 """
-function StandardNeuralNetwork(ann::M, ps, st::S; objective::O=SSE(), rng::R=Random.default_rng()) where {O<:AbstractObjective,M,S,R<:AbstractRNG}
+function StandardNeuralNetwork(ann::M, ps, st::S; objective::O=SSE(), rng::R=Random.default_rng()) where {O<:AbstractObjective,M,S,R<:Random.AbstractRNG}
     if !(objective isa SSE) && !(objective isa LogLikelihood)
         return throw(ErrorException("StandardNeuralNetwork model is not implemented for $O. Use `SSE()` or `LogLikelihood()` instead."))
     end

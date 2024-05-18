@@ -1,18 +1,8 @@
-import Statistics: Statistics, std
-import LinearAlgebra: Diagonal
-import Random: AbstractRNG, rand!
-import Bijectors
-import Lux
-
-using Distributions
-using PartialFunctions
-
 abstract type AbstractObjective end
 abstract type FixedObjective <: AbstractObjective end
 abstract type MixedObjective <: AbstractObjective end
 
 ########## FixedObjectives
-
 """
     SSE()
 
@@ -33,8 +23,6 @@ end
 
 sse(y::T, ŷ::T) where T<:AbstractVector{<:AbstractVector} = sum(abs2, reduce(vcat, y - ŷ))
 sse(y::AbstractVector{<:AbstractVector}, ŷ::AbstractVector{<:Real}) = sum(abs2, reduce(vcat, y) - ŷ)
-
-# TODO: Potentially add a objective(::SSE, ŷ::AbstractVector{<:Real}) and objective(::SSE, ŷ::AbstractVector{<:AbstractVector}). The latter can do only a single reduce
 
 # TODO: Force the D in LogLikelihood to have eltype Float32
 """
@@ -94,11 +82,11 @@ parameters.
 """
 function init_omega(rng::Random.AbstractRNG, n, ::Type{T}=Float32; omega_dist::Sampleable=Normal(0.2, 0.03), C_shape::Real=50.) where T<:Float32 
     ω_init = zeros(T, n)
-    rand!(rng, omega_dist, ω_init)
+    Random.rand!(rng, omega_dist, ω_init)
     ω_init = max.(ω_init, zero(T)) .+ T(1e-3)
 
     C_init = zeros(T, n, n)
-    rand!(rng, LKJ(n, C_shape), C_init)
+    Random.rand!(rng, LKJ(n, C_shape), C_init)
 
     return (omega = (var = softplus_inv.(ω_init), corr = Bijectors.VecCorrBijector()(C_init)),)
 end
@@ -131,13 +119,13 @@ function init_phi(model::AbstractModel{O,M,P}, pop::Population; sigma_dist::Samp
     T = eltype(model.p.omega.var)
     
     sigma_init = zeros(T, num_random_effects, n)
-    rand!(model.rng, sigma_dist, sigma_init)
+    Random.rand!(model.rng, sigma_dist, sigma_init)
     sigma_init = max.(sigma_init, zero(T))  .+ T(1e-3)
     
     p_ = (mean = zeros(T, num_random_effects, n), sigma = softplus_inv.(sigma_init),)
     if FullRank in typeof(model.objective).parameters
         C_init = zeros(T, num_random_effects, num_random_effects, n)
-        rand!(model.rng, LKJ(num_random_effects, C_shape), C_init)
+        Random.rand!(model.rng, LKJ(num_random_effects, C_shape), C_init)
         C_init_vec = reduce(hcat, [Bijectors.VecCholeskyBijector(:L)(C_init[:, :, i]) for i in 1:size(C_init)[end]])
         p_ = merge(p_, (corr = C_init_vec, ))
     end
@@ -201,4 +189,46 @@ function adapt!(individual::AbstractIndividual, model::AbstractModel{O,M,P}) whe
     empty!(individual.eta)
     push!(individual.eta, zeros(eltype(individual.eta), length(model.objective.idxs))...)
     return nothing
+end
+
+"""
+    fit!(model::AbstractModel, population::Population, opt, epochs; callback)
+
+Fits the model in place to the data from the population. Updated model 
+parameters are stored in the model. Can be passed a callback function that can 
+be used to monitor training. The callback is called with the current epoch and 
+loss after gradient calculation and before updating model parameters.
+"""
+function fit!(model::AbstractModel{O,M,P,S}, population::Population, opt, epochs::Int; callback=(e,l) -> nothing) where {O<:FixedObjective,M,P,S}
+    opt_state = Optimisers.setup(opt, model.p)
+    for epoch in 1:epochs
+        loss, back = Zygote.pullback(p -> objective(model, population, p), model.p)
+        grad = first(back(1))
+        callback(epoch, loss)
+        opt_state, new_p = Optimisers.update(opt_state, model.p, grad)
+        update!(model, new_p)
+    end
+    return nothing
+end
+
+# TODO: allow for multiple optimizers (one for p and one for phi)
+# TODO: allow passing previous phi
+function fit!(model::AbstractModel{O,M,P,S}, population::Population, opt, epochs::Int; callback=(e,l) -> nothing) where {O<:VariationalELBO,M,P,S}
+    phi = model.objective.init_phi(model, population)
+
+    if typeof(model.objective.approx) <: SampleAverage
+        init_samples!(model.objective, population)
+    end # TODO: make this optional
+
+    opt_state = Optimisers.setup(opt, model.p)
+    opt_state_phi = Optimisers.setup(opt, phi)
+    for epoch in 1:epochs
+        loss, back = Zygote.pullback((p, phi) -> objective(model, population, p, phi), model.p, phi)
+        grad_p, grad_phi = back(1)
+        callback(epoch, loss)
+        opt_state, new_p = Optimisers.update(opt_state, model.p, grad_p)
+        opt_state_phi, phi = Optimisers.update(opt_state_phi, phi, grad_phi) # TODO: Natural Gradient descent.
+        update!(model, new_p)
+    end
+    return phi
 end
