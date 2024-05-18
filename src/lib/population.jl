@@ -128,3 +128,18 @@ get_x(individual::AbstractIndividual) = individual.x
 get_x(population::Population) = stack([indv.x for indv in population.indvs])
 get_y(population::Population) = @ignore_derivatives [indv.y for indv in population.indvs]
 get_t(population::Population) = [indv.t for indv in population.indvs]
+
+function load(df, covariates; S1=1, time=:TIME, amt=:AMT, rate=:RATE, duration=:DURATION, mdv=:MDV, dv=:DV, id=:ID)
+    df_group = groupby(df, id)
+
+    indvs = Vector{AbstractIndividual}(undef, length(df_group))
+    for (i, group) in enumerate(df_group)
+        x = Vector{Float32}(group[1, covariates])
+        ty = group[group[mdv] .== 0, [time, dv]]
+        𝐈 = Matrix{Float32}(group[group[mdv] .== 1, [time, amt, rate, duration]])
+        callback_ = generate_dosing_callback(𝐈; S1=Float32(S1))
+        indvs[i] = Individual(x, Float32.(ty[time]), Float32.(ty[dv]), callback_; id = first(group[id]))
+    end
+    
+    return Population(indvs)
+end
