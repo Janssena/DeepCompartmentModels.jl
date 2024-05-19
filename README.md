@@ -8,9 +8,7 @@ hesitate to open an
 [issue](https://github.com/Janssena/DeepCompartmentModels.jl/issues/new) or 
 submit a pull request. 
 
-
-
-#### Introduction
+### Introduction
 
 Deep Compartment Models is novel deep learning based modeling framework for 
 fitting machine learning models to time-series data in the medical domain. The 
@@ -32,7 +30,7 @@ about drug kinetics and dynamics. Aside from improving model reliability, this
 also reduces the need for large data sets as we can supply prior knowledge about 
 drug dynamics to the model *a priori*.
 
-#### Installation
+### Installation
 
 **Installing Julia.**
 
@@ -56,11 +54,15 @@ julia> using Pkg
 julia> Pkg.add("DeepCompartmentModels")
 ```
 
-#### Fitting a model
+### Fitting a model
 
 Deep compartment models consist of a neural network and a system of differential 
 equations. [Lux](https://lux.csail.mit.edu/stable/) is a machine learning 
-library that aids in definiting complex neural network architectures.  
+library that aids in definiting complex neural network architectures. It is 
+automatically loaded in the REPL session after running 
+`using DeepCompartmentModels`, so you can direclty make use of functions like 
+`Lux.Chain` and `Lux.Dense`.
+
 
 ```julia
 import Optimisers
