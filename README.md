@@ -10,7 +10,7 @@ submit a pull request.
 
 ### Introduction
 
-Deep Compartment Models is novel deep learning based modeling framework for 
+Deep Compartment Models are novel deep learning based modeling framework for 
 fitting machine learning models to time-series data in the medical domain. The 
 aim of these models is to provide insights for the personalization of treatment 
 of patients. The package aims to combine techinques from the field of machine 
@@ -88,3 +88,10 @@ fit!(model, population, Optimisers.Adam(), 500) # optimize neural network for 50
 
 predict(model, population[1]) # predict the concentration for the first individual in the population.
 ```
+
+### Citing this work
+
+Whenever you use contents from this package, please help us spread interest by 
+citing the original works on which this package has been based:
+
+> Janssen, A., Leebeek, F. W., Cnossen, M. H., Mathôt, R. A., OPTI‐CLOT study group and SYMPHONY consortium, (2022). Deep compartment models: a deep learning approach for the reliable prediction of time‐series data in pharmacokinetic modeling. CPT: Pharmacometrics & Systems Pharmacology, 11(7), 934-945.
