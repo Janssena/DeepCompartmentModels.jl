@@ -2,9 +2,6 @@ module DeepCompartmentModels
 
 using Reexport
 
-@reexport import Optimisers
-@reexport import Random
-
 @reexport using Lux
 @reexport using Distributions
 @reexport using DistributionsAD
@@ -14,8 +11,10 @@ using Reexport
 
 import Zygote.ChainRules: @ignore_derivatives, ignore_derivatives
 import LinearAlgebra: Diagonal, Symmetric, diag
+import Optimisers
 import Bijectors
 import Zygote
+import Random
 
 using PartialFunctions
 
