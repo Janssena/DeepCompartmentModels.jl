@@ -63,6 +63,7 @@ equations. [Lux](https://lux.csail.mit.edu/stable/) is a machine learning
 library that aids in definiting complex neural network architectures.  
 
 ```julia
+import Optimisers
 import CSV
 
 using DataFrames
@@ -81,7 +82,7 @@ ann = Chain(
 # DeepCompartmentModels already exports some compartmental structures including two_comp!
 model = DCM(two_comp!, ann, 2) 
 
-fit!(model, population) # optimize neural network
+fit!(model, population, Optimisers.Adam(), 500) # optimize neural network for 500 epochs
 
 predict(model, population[1]) # predict the concentration for the first individual in the population.
 ```
