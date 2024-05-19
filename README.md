@@ -2,33 +2,35 @@
 
 A package for fitting Deep Compartment Models in julia. 
 
-Most of the basic functionality for fitting deep compartment models has been 
-implemented. If you have any suggestions to improve the package, please do not 
-hesitate to open an 
-[issue](https://github.com/Janssena/DeepCompartmentModels.jl/issues/new) or 
-submit a pull request. 
+Most of the basic functionality for fitting these models has been implemented. 
+If you have any suggestions to improve the package, please do not hesitate to 
+open an [issue](https://github.com/Janssena/DeepCompartmentModels.jl/issues/new) 
+or submit a pull request. 
 
 ### Introduction
 
-Deep Compartment Models are novel deep learning based modeling framework for 
-fitting machine learning models to time-series data in the medical domain. The 
-aim of these models is to provide insights for the personalization of treatment 
-of patients. The package aims to combine techinques from the field of machine 
-learning and pharmacometrics in order to produce more reliable models.
+The deep compartment model (DCMs) framework is novel deep learning based 
+modeling framework for fitting machine learning (ML) models to time-series data 
+in the medical domain. The aim of these models is to provide insights for the 
+personalization of treatment of patients. The package aims to combine techinques 
+from the field of ML and pharmacometrics in order to produce more reliable models.
 
 A main problem with using machine learning as-is for this purpose is that there 
 is a large amount of heterogeneity in measurement timing or treatment 
-intervations between patients. In standard machine learning based approaches, we 
-have to supply information such as the time points of interest or the 
-administered dose directly as inputs to the model, while we are uncertain how 
-the algorithm will treat them. Generally, we thus see that such information is 
-interpreted incorrectly, and thus raises questions regarding the reliablility of 
-the predictions. Instead, by using a system of differential equations, we can 
-explicitly handle such information. The classic deep compartment model structure 
-uses compartment models to constrain the solution to follow certain expectations 
+interventions between patients. In standard ML-based algorithms, we have to 
+supply information such as the time points of interest or the administered dose 
+directly as inputs to the model, while we are uncertain how the algorithm will 
+treat them. Generally, we thus see that such information is interpreted 
+incorrectly, and thus raises questions regarding the reliablility of the 
+predictions. Instead, by using a system of differential equations, we can 
+explicitly handle time and other interventions. The standard DCM structure uses 
+compartment models to constrain the solution to follow certain expectations 
 about drug kinetics and dynamics. Aside from improving model reliability, this 
 also reduces the need for large data sets as we can supply prior knowledge about 
 drug dynamics to the model *a priori*.
+
+We are also working on bringing NeuralODE capabilities to the framework. These 
+features are available under the `HybridDCM` type.
 
 ### Installation
 
@@ -41,7 +43,7 @@ julia installed. You can download the appropriate julia installer
 
 **Installing the DeepCompartmentModels package**
 
-After installing julia run the `julia` command in an open command line or bash 
+After installing julia, run the `julia` command in an open command line or bash 
 window to launch a julia REPL. Enter the following commands:
 
 ```julia
@@ -56,13 +58,16 @@ julia> Pkg.add("DeepCompartmentModels")
 
 ### Fitting a model
 
-Deep compartment models consist of a neural network and a system of differential 
+A DCM consists of a neural network and a system of differential 
 equations. [Lux](https://lux.csail.mit.edu/stable/) is a machine learning 
 library that aids in definiting complex neural network architectures. It is 
 automatically loaded in the REPL session after running 
 `using DeepCompartmentModels`, so you can direclty make use of functions like 
 `Lux.Chain` and `Lux.Dense`.
 
+The DeepCompartmentModels package already exports some compartmental structures 
+including one_comp! and two_comp!. Pull requests adding new compartmental 
+structures are very welcome!
 
 ```julia
 import Optimisers
@@ -81,7 +86,6 @@ ann = Chain(
     Dense(16, 4, softplus), # Our differential equation has four parameters
 )
 
-# DeepCompartmentModels already exports some compartmental structures including two_comp!
 model = DCM(two_comp!, ann, 2) 
 
 fit!(model, population, Optimisers.Adam(), 500) # optimize neural network for 500 epochs
