@@ -92,6 +92,6 @@ predict(model, population[1]) # predict the concentration for the first individu
 ### Citing this work
 
 Whenever you use contents from this package, please help us spread interest by 
-citing the original works on which this package has been based:
+citing the original work on which this package has been based:
 
 > Janssen, A., Leebeek, F. W., Cnossen, M. H., Mathôt, R. A., OPTI‐CLOT study group and SYMPHONY consortium, (2022). Deep compartment models: a deep learning approach for the reliable prediction of time‐series data in pharmacokinetic modeling. CPT: Pharmacometrics & Systems Pharmacology, 11(7), 934-945.
