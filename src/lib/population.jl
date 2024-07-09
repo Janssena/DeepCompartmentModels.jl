@@ -1,3 +1,5 @@
+using DataFrames
+
 abstract type AbstractIndividual{I,X,T,Y,C} end
 
 Base.show(io::IO, indv::I) where {I<:AbstractIndividual} = print(io, "$(I.name.name){id = $(indv.id), ...)")
@@ -135,10 +137,10 @@ function load(df, covariates; S1=1, time=:TIME, amt=:AMT, rate=:RATE, duration=:
     indvs = Vector{AbstractIndividual}(undef, length(df_group))
     for (i, group) in enumerate(df_group)
         x = Vector{Float32}(group[1, covariates])
-        ty = group[group[mdv] .== 0, [time, dv]]
-        𝐈 = Matrix{Float32}(group[group[mdv] .== 1, [time, amt, rate, duration]])
+        ty = group[group[!, mdv] .== 0, [time, dv]]
+        𝐈 = Matrix{Float32}(group[group[!, mdv] .== 1, [time, amt, rate, duration]])
         callback_ = generate_dosing_callback(𝐈; S1=Float32(S1))
-        indvs[i] = Individual(x, Float32.(ty[time]), Float32.(ty[dv]), callback_; id = first(group[id]))
+        indvs[i] = Individual(x, Float32.(ty[!, time]), Float32.(ty[!, dv]), callback_; id = first(group[!, id]))
     end
     
     return Population(indvs)

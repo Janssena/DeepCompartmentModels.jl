@@ -19,7 +19,7 @@ import Random
 using PartialFunctions
 
 include("lib/population.jl");
-export  AbstractIndividual, BasicIndividual, Individual, Population, get_x
+export  AbstractIndividual, BasicIndividual, Individual, Population, get_x, load
 
 include("lib/model.jl");
 export  predict, update!, forward_ode
