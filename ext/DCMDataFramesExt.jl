@@ -1,6 +1,6 @@
 module DCMDataFramesExt
 
-import DeepCompartmentModels: Population, AbstractIndividual, Individual, generate_dosing_callback
+import DeepCompartmentModels: DeepCompartmentModels, Population, AbstractIndividual, Individual, generate_dosing_callback
 import DataFrames: DataFrame, groupby
 
 """
@@ -14,7 +14,7 @@ respect to the column names.
 - `df::DataFrame`: DataFrame containing the data.
 - `covariates`: A vector of strings or symbols detailing the covariates to take.
 """
-function load(df::DataFrame, covariates; S1=1)
+function DeepCompartmentModels.load(df::DataFrame, covariates; S1=1)
     colnames = find_colnames(df)
     df, colnames = handle_missing_rate_duration(df::DataFrame, colnames)
     df_group = groupby(df, colnames[:id])
