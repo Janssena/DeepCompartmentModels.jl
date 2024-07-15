@@ -86,7 +86,7 @@ ann = Chain(
     Dense(16, 4, softplus), # Our differential equation has four parameters
 )
 
-model = DCM(two_comp!, ann, 2) 
+model = DCM(two_comp!, 2, ann) # passing the number of compartments (2) is necessary here.
 
 fit!(model, population, Optimisers.Adam(), 500) # optimize neural network for 500 epochs
 
