@@ -1,7 +1,7 @@
 name = "DeepCompartmentModels"
 uuid = "398c52f8-e6e0-45bd-bf73-2340696b0a8e"
 authors = ["Janssena <alexanderjanssen@live.com>"]
-version = "1.0.1"
+version = "1.0.2"
 
 [deps]
 Bijectors = "76274a88-744f-5084-9051-94815aaf08c4"
