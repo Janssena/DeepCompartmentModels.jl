@@ -95,7 +95,7 @@ end
 
 init_params(model) = init_params(model.rng, model.objective, model.ann)
 init_params!(model) = update!(model, init_params(model.rng, model.objective, model.ann))
-init_params(rng, objective, ann::Lux.AbstractExplicitLayer) = init_params(rng, objective, Lux.setup(rng, ann)...)
+init_params(rng, objective, ann::Lux.AbstractLuxLayer) = init_params(rng, objective, Lux.setup(rng, ann)...)
 
 function init_params(rng, objective, ps::NamedTuple, st::NamedTuple)
     p = (weights = ps,)

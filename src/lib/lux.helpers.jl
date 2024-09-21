@@ -13,7 +13,7 @@ length of `lb` and `ub` should match the input vector.
 - `lb`: lower bound, default = zero(ub).
 - `ub`: upper bound.
 """
-struct Normalize <: Lux.AbstractExplicitLayer
+struct Normalize <: Lux.AbstractLuxLayer
     lb::Vector{Float32}
     ub::Vector{Float32}
     Normalize(lb::T, ub::T) where T<:Vector{<:Real} = new(Float32.(lb), Float32.(ub))
@@ -65,7 +65,7 @@ julia> layer([1; 2;;], ps, st)[1] # returns y, st
  θ₂
 ```
 """
-struct AddGlobalParameters{T, F1, F2} <: Lux.AbstractExplicitLayer
+struct AddGlobalParameters{T, F1, F2} <: Lux.AbstractLuxLayer
     theta_dim::Int
     out_dim::Int
     locations::Vector{Int}
@@ -113,7 +113,7 @@ julia> layer = Combine(1 => [1], 2 => [1], 3 => [2]) # Connects branch 1 to outp
 Combine()
 ```
 """
-struct Combine{T1, T2} <: Lux.AbstractExplicitLayer
+struct Combine{T1, T2} <: Lux.AbstractLuxLayer
     out_dim::Int
     pairs::T2
 end
@@ -269,7 +269,7 @@ y = f(x) ./ f(anchor)
 - `anchor`: Unnormalized covariate value to which the output is "anchored", i.e. f(anchor) = 1.
 - `x`: Normalized dummy input to the branch. 
 """
-function interpret_branch(ann::Lux.AbstractExplicitContainerLayer, ps, st, covariate_idx, anchor; x = 0:0.01:1)
+function interpret_branch(ann::Lux.AbstractLuxContainerLayer, ps, st, covariate_idx, anchor; x = 0:0.01:1)
     branch_layer = findall(layer -> typeof(layer) <: BranchLayer, ann.layers)
     if length(branch_layer) > 1
         throw(ErrorException("Multiple BranchLayers detected. The interpret_branch function only accepts model with a single BranchLayer"))

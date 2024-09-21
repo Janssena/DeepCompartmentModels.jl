@@ -1,7 +1,7 @@
 name = "DeepCompartmentModels"
 uuid = "398c52f8-e6e0-45bd-bf73-2340696b0a8e"
 authors = ["Janssena <alexanderjanssen@live.com>"]
-version = "1.0.3"
+version = "1.1.0"
 
 [deps]
 Bijectors = "76274a88-744f-5084-9051-94815aaf08c4"
@@ -31,7 +31,7 @@ DifferentialEquations = "7.13"
 Distributions = "0.25"
 DistributionsAD = "0.6"
 Enzyme = "0.12"
-Lux = "0.5"
+Lux = "1"
 Optimisers = "0.3"
 PartialFunctions = "1.2"
 Reexport = "1.2"

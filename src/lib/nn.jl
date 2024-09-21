@@ -4,7 +4,7 @@
 Standard neural network architecture that directly predicts the observations `y`
 based on covariates `x`, time point `t`, and dose `d`.
 """
-struct StandardNeuralNetwork{O<:AbstractObjective,M<:Lux.AbstractExplicitLayer,P,S,R<:Random.AbstractRNG} <: AbstractModel{O,M,P,S}
+struct StandardNeuralNetwork{O<:AbstractObjective,M<:Lux.AbstractLuxLayer,P,S,R<:Random.AbstractRNG} <: AbstractModel{O,M,P,S}
     objective::O
     ann::M
     p::P
@@ -24,7 +24,7 @@ function StandardNeuralNetwork(ann::M; objective::O=SSE(), rng::R=Random.default
     if !(objective isa SSE) && !(objective isa LogLikelihood)
         return throw(ErrorException("StandardNeuralNetwork model is not implemented for $O. Use `SSE()` or `LogLikelihood()` instead."))
     end
-    !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
+    !(ann isa Lux.AbstractLuxLayer) && (ann = FromFluxAdaptor()(ann))
     p, st = init_params(rng, objective, ann)
     StandardNeuralNetwork{O,typeof(ann),typeof(p),typeof(st),R}(objective, ann, p, st, rng)
 end
@@ -45,7 +45,7 @@ function StandardNeuralNetwork(ann::M, ps, st::S; objective::O=SSE(), rng::R=Ran
     if !(objective isa SSE) && !(objective isa LogLikelihood)
         return throw(ErrorException("StandardNeuralNetwork model is not implemented for $O. Use `SSE()` or `LogLikelihood()` instead."))
     end
-    !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
+    !(ann isa Lux.AbstractLuxLayer) && (ann = FromFluxAdaptor()(ann))
     p, _ = init_params(rng, objective, ps, st)
     StandardNeuralNetwork{O,typeof(ann),typeof(p),S,R}(objective, ann, p, st, rng)
 end

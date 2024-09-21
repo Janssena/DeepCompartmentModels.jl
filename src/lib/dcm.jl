@@ -7,7 +7,7 @@ of differential equations, for example describing a compartment model.
 \\
 [janssen2022] Janssen, Alexander, et al. "Deep compartment models: a deep learning approach for the reliable prediction of time‐series data in pharmacokinetic modeling." CPT: Pharmacometrics & Systems Pharmacology 11.7 (2022): 934-945.
 """
-struct DeepCompartmentModel{O<:AbstractObjective,D<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractExplicitLayer,P,S,R<:Random.AbstractRNG} <: AbstractDEModel{O,D,M,P,S}
+struct DeepCompartmentModel{O<:AbstractObjective,D<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer,P,S,R<:Random.AbstractRNG} <: AbstractDEModel{O,D,M,P,S}
     objective::O
     problem::D
     ann::M
@@ -22,14 +22,14 @@ end
 
 # Arguments
 - `prob::AbstractDEProblem`: DE problem describing the dynamical system.
-- `ann::AbstractExplicitLayer`: Lux model representing the ann.
+- `ann::AbstractLuxLayer`: Lux model representing the ann.
 - `p`: Model parameters, containing all model parameters.
 - `rng`: Randomizer used for initialization of the parameters.
 - `objective::AbstractObjective`: Objective function to optimize. Currently supports SSE, LogLikelihood, and VariationalELBO (for mixed effects estimation). Default = SSE.
 - `dv_compartment::Int`: The index of the compartment for the prediction of the dependent variable. Default = 1.
 """
 function DeepCompartmentModel(problem_::D, ann::M, p::P, st::S; rng::R=Random.default_rng(), objective::O=SSE(), dv_compartment::Int=1) where {O<:AbstractObjective,D<:SciMLBase.AbstractDEProblem,M,P,S,R}
-    !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
+    !(ann isa Lux.AbstractLuxLayer) && (ann = FromFluxAdaptor()(ann))
     if !(problem_ isa SciMLBase.AbstractODEProblem)
         println("[info] DeepCompartmentModels.jl is not tested using problems of type $(D). Be wary of any errors.")
     end
@@ -59,10 +59,10 @@ Convenience constructor also initializing the model parameters.
 
 # Arguments
 - `prob::AbstractDEProblem`: DE problem describing the dynamical system.
-- `ann::AbstractExplicitLayer`: Lux model representing the ann.
+- `ann::AbstractLuxLayer`: Lux model representing the ann.
 """
 function DeepCompartmentModel(problem::D, ann::M; rng=Random.default_rng(), objective=SSE(), kwargs...) where {D<:SciMLBase.AbstractDEProblem,M}
-    !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
+    !(ann isa Lux.AbstractLuxLayer) && (ann = FromFluxAdaptor()(ann))
     p, st = init_params(rng, objective, ann)
     DeepCompartmentModel(problem, ann, p, st; rng, objective, kwargs...)
 end
@@ -74,12 +74,12 @@ end
 
 # # Arguments
 # - `prob::AbstractDEProblem`: DE problem describing the dynamical system.
-# - `ann::AbstractExplicitLayer`: Lux model representing the ann.
+# - `ann::AbstractLuxLayer`: Lux model representing the ann.
 # - `ps`: Initial parameters for the neural network.
 # - `st`: Initial state for the neural network.
 # """
 # function DeepCompartmentModel(problem::D, ann::M, ps::NamedTuple, st::NamedTuple; rng::R=Random.default_rng(), objective::O=SSE(), kwargs...) where {O<:AbstractObjective,D<:AbstractDEProblem,M,R}
-#     !(ann isa Lux.AbstractExplicitLayer) && (ann = Lux.transform(ann))
+#     !(ann isa Lux.AbstractLuxLayer) && (ann = FromFluxAdaptor()(ann))
 #     p = init_params(rng, objective, ps, st)
 #     DeepCompartmentModel(problem, ann, p; rng, kwargs...)
 # end

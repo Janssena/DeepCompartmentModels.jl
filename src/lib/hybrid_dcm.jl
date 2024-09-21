@@ -11,7 +11,7 @@ struct HybridDCM{O,D,M,P,S,R} <: AbstractDEModel{O,D,M,P,S}
     rng::R
 end
 
-function HybridDCM(dudt::Function, model::Lux.AbstractExplicitContainerLayer, num_compartments::Int; rng = Random.default_rng(), kwargs...)
+function HybridDCM(dudt::Function, model::Lux.AbstractLuxContainerLayer, num_compartments::Int; rng = Random.default_rng(), kwargs...)
     ps, st = Lux.setup(rng, model)
     node = StatefulLuxLayer(model.node, st.node)
     

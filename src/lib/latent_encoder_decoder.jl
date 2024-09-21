@@ -1,4 +1,4 @@
-struct LatentEncoderDecoder <: Lux.AbstractExplicitContainerLayer{(:encoder,:node,:decoder)} # Lu et al
+struct LatentEncoderDecoder <: Lux.AbstractLuxContainerLayer{(:encoder,:node,:decoder)} # Lu et al
     encoder
     node
     decoder

@@ -1,4 +1,4 @@
-struct BasicHybridModel <: Lux.AbstractExplicitContainerLayer{(:ann,:node)} 
+struct BasicHybridModel <: Lux.AbstractLuxContainerLayer{(:ann,:node)} 
     ann
     node
 end
