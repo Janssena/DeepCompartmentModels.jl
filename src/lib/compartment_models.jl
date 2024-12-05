@@ -1,27 +1,29 @@
-# Please feel free to contribute other compartment models to the current list.
+"""
+    unpack(p::AbstractVector, t)
+
+For Vector-based `p` this function just returns `p`.
+"""
+unpack(p::AbstractVector, _) = p
 
 """
-    unpack(p::AbstractMatrix, t::Real)
+    unpack(p::AbstractMatrix, t)
 
 Enables the use of parameters that change over time. Collects the column of the 
 parameter matrix that matches the current intergrator time point.
 """
-function unpack(p::AbstractMatrix, t::Real)
+function unpack(p::AbstractMatrix, t) # TODO: can we set the type of t? Can become Dual
     view = @view p[1, :]
-    index = findlast(<(t), view)
-    return @view p[2:end, index === nothing ? 1 : index] # Should be a view
+    return _take_col(p, findlast(<(t), view))
     # Above saves one allocation versus below 🌠
     # index = findlast(<(t), p[1, :])
     # return p[2:end, index === nothing ? 1 : index] # Should be a view
 end
 
-"""
-    unpack(p::AbstractVector, t::Real)
+_take_col(p, ::Nothing) = @view p[2:end, 1]
+_take_col(p, index::Int) = @view p[2:end, index]
 
-For Vector-based `p` this function just returns `p`.
-"""
-unpack(p::AbstractVector, ::Real) = p
-
+########## COMPARTMENT MODELS
+# Please feel free to contribute other compartment models to the current list.
 
 """
     one_comp!(dA, A, p, t)
@@ -54,14 +56,16 @@ dA₂/dt = kₐ ⋅ A₁ - A₂ ⋅ k₁₀
 
 # Model parameters
 - `kₐ`: Rate of drug absorption.
-- `k₁₀`: Rate of drug elimination.
+- `CL`: Drug clearance estimate.
+- `Vd`: Drug volume of distribution estimate.
 - `I`: Rate of drug infusion; handled by callback function.
 """
 function one_comp_abs!(dA, A, p, t)
-    kₐ, k₁₀, I = unpack(p, t)
+    kₐ, CL, Vd, I = unpack(p, t)
+    k₁₀ = CL / Vd
     
     dA[1] = I - kₐ * A[1]
-    dA[2] = kₐ * A[1] - A[2] * k₁₀
+    dA[2] = (kₐ * A[1] / Vd) - A[2] * k₁₀
 end
 
 """
@@ -85,13 +89,13 @@ dA₂/dt = A₁ ⋅ k₁₂ - A₂ ⋅ k₂₁
 - `k₂₁`: Q / V₂
 """
 function two_comp!(dA, A, p, t)
-    CL, V1, Q, V2, I = unpack(p, t)
+    CL, V₁, Q, V₂, I = unpack(p, t)
     
-    k₁₀ = CL / V1
-    k₁₂ = Q / V1
-    k₂₁ = Q / V2
+    k₁₀ = CL / V₁
+    k₁₂ = Q / V₁
+    k₂₁ = Q / V₂
 
-    dA[1] = (I / V1) + A[2] * k₂₁ - A[1] * (k₁₀ + k₁₂)
+    dA[1] = (I / V₁) + A[2] * k₂₁ - A[1] * (k₁₀ + k₁₂)
     dA[2] = A[1] * k₁₂ - A[2] * k₂₁    
 end
 
@@ -107,15 +111,19 @@ dA₃/dt = A₂ ⋅ k₂₃ - A₃ ⋅ k₃₂
 
 # Model parameters
 - `kₐ`: Rate of drug absorption.
-- `k₂₀`: Rate of drug elimination.
-- `k₂₃`: Rate of drug moving from compartment 2 to 3.
-- `k₃₂`: Rate of drug moving from compartment 3 to 2.
+- `CL`: Drug clearance from the first compartment (in A₂).
+- `V₁`: Central volume of distribution (in A₂).
+- `Q`: Inter-compartmental clearance (in A₃).
+- `V₂`: Peripheral volume of distribution (in A₃).
 - `I`: Rate of drug infusion; handled by callback function.
 """
 function two_comp_abs!(dA, A, p, t)
-    kₐ, k₂₀, k₂₃, k₃₂, I = unpack(p, t)
+    kₐ, CL, V₁, Q, V₂, I = unpack(p, t)
+    k₁₀ = CL / V₁
+    k₁₂ = Q / V₁
+    k₂₁ = Q / V₂
 
     dA[1] = I - kₐ * A[1]
-    dA[2] = kₐ * A[1] + A[3] * k₃₂ - A[2] * (k₂₀ + k₂₃)
-    dA[3] = A[2] * k₂₃ - A[3] * k₃₂
+    dA[2] = (kₐ * A[1] / V₁) + A[3] * k₂₁ - A[2] * (k₁₀ + k₁₂)
+    dA[3] = A[2] * k₁₂ - A[3] * k₂₁
 end

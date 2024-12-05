@@ -13,14 +13,15 @@ length of `lb` and `ub` should match the input vector.
 - `lb`: lower bound, default = zero(ub).
 - `ub`: upper bound.
 """
-struct Normalize <: Lux.AbstractExplicitLayer
-    lb::Vector{Float32}
-    ub::Vector{Float32}
-    Normalize(lb::T, ub::T) where T<:Vector{<:Real} = new(Float32.(lb), Float32.(ub))
-    Normalize(ub::T) where T<:Vector{<:Real} = new(zeros(Float32, length(ub)), Float32.(ub))
-    Normalize(lb::Real, ub::Real) = new(Float32[lb], Float32[ub])
-    Normalize(ub::Real) = new(Float32[ub])
+struct Normalize{T} <: Lux.AbstractLuxLayer
+    lb::Vector{T}
+    ub::Vector{T}
+    Normalize(lb::AbstractVector, ub::AbstractVector, ::Type{T}=Float32) where T = new{T}(T.(lb), T.(ub))
+    Normalize(ub::AbstractVector, ::Type{T}=Float32) where T = new{T}(zeros(T, length(ub)), T.(ub))
 end
+
+Normalize(lb::Real, ub::Real, ::Type{T}=Float32) where T = Normalize([lb], [ub], T)
+Normalize(ub::Real, ::Type{T}=Float32) where T = Normalize([ub], T)
 
 Lux.initialparameters(::Random.AbstractRNG, ::Normalize) = NamedTuple()
 Lux.initialstates(::Random.AbstractRNG, l::Normalize) = (lb = l.lb, ub = l.ub)
@@ -65,7 +66,7 @@ julia> layer([1; 2;;], ps, st)[1] # returns y, st
  θ₂
 ```
 """
-struct AddGlobalParameters{T, F1, F2} <: Lux.AbstractExplicitLayer
+struct AddGlobalParameters{T, F1, F2} <: Lux.AbstractLuxLayer
     theta_dim::Int
     out_dim::Int
     locations::Vector{Int}
@@ -73,13 +74,15 @@ struct AddGlobalParameters{T, F1, F2} <: Lux.AbstractExplicitLayer
     activation::F2
 end
 
-AddGlobalParameters(out_dim, loc, T=Float32; init_theta=Lux.glorot_uniform, activation=softplus) = AddGlobalParameters{T, typeof(init_theta), typeof(activation)}(length(loc), out_dim, loc, init_theta, activation)
+AddGlobalParameters(out_dim, loc, ::Type{T}=Float32; init_theta=Lux.glorot_uniform, activation=softplus) where T = 
+    AddGlobalParameters{T, typeof(init_theta), typeof(activation)}(length(loc), out_dim, loc, init_theta, activation)
 
 Lux.initialparameters(rng::Random.AbstractRNG, l::AddGlobalParameters) = (theta = l.init_theta(rng, l.theta_dim, 1),)
 Lux.initialstates(::Random.AbstractRNG, l::AddGlobalParameters{T,F1,F2}) where {T,F1,F2} = (indicator_theta = indicator(l.out_dim, l.locations, T), indicator_x = indicator(l.out_dim, filter(!∈(l.locations), 1:l.out_dim), T))
 Lux.parameterlength(l::AddGlobalParameters) = l.theta_dim
 Lux.statelength(l::AddGlobalParameters) = 2 * l.theta_dim * l.out_dim
 
+# TODO: remove if statement
 # the indicators should be in the state!
 function (l::AddGlobalParameters)(x::AbstractMatrix, ps, st::NamedTuple)
     if size(st.indicator_x, 2) !== size(x, 1)
@@ -113,12 +116,12 @@ julia> layer = Combine(1 => [1], 2 => [1], 3 => [2]) # Connects branch 1 to outp
 Combine()
 ```
 """
-struct Combine{T1, T2} <: Lux.AbstractExplicitLayer
+struct Combine{T1, T2} <: Lux.AbstractLuxLayer
     out_dim::Int
     pairs::T2
 end
 
-function Combine(pairs::Vararg{Pair{Int64, Vector{Int64}}}; T=Float32)
+function Combine(pairs::Vararg{Pair{Int64, Vector{Int64}}}; type::Type{T} = Float32) where T
     out_dim = maximum([maximum(pairs[i].second) for i in eachindex(pairs)])
     return Combine{T, typeof(pairs)}(out_dim, pairs)
 end
@@ -248,7 +251,7 @@ the AbstractModel interface.
 - `anchor`: Unnormalized covariate value to which the output is "anchored", i.e. f(anchor) = 1.
 - `x`: Normalized dummy input to the branch. 
 """
-interpret_branch(model::AbstractModel, covariate_idx, anchor; kwargs...) = interpret_branch(model.ann, model.p.weights, model.p.st, covariate_idx, anchor; kwargs...)
+interpret_branch(model::AbstractModel, covariate_idx, anchor; kwargs...) = interpret_branch(model.ann, model.p.theta, model.p.st, covariate_idx, anchor; kwargs...)
 
 """
     interpret_branch(model, covariate_idx, anchor, ps, st; x)
@@ -269,7 +272,7 @@ y = f(x) ./ f(anchor)
 - `anchor`: Unnormalized covariate value to which the output is "anchored", i.e. f(anchor) = 1.
 - `x`: Normalized dummy input to the branch. 
 """
-function interpret_branch(ann::Lux.AbstractExplicitContainerLayer, ps, st, covariate_idx, anchor; x = 0:0.01:1)
+function interpret_branch(ann::Lux.AbstractLuxContainerLayer, ps, st, covariate_idx, anchor; x = 0:0.01:1) # TODO: set type of dummy_x
     branch_layer = findall(layer -> typeof(layer) <: BranchLayer, ann.layers)
     if length(branch_layer) > 1
         throw(ErrorException("Multiple BranchLayers detected. The interpret_branch function only accepts model with a single BranchLayer"))

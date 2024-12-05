@@ -1,234 +1,218 @@
+import Zygote.ChainRules: ignore_derivatives
+
 abstract type AbstractObjective end
 abstract type FixedObjective <: AbstractObjective end
 abstract type MixedObjective <: AbstractObjective end
 
-########## FixedObjectives
+objective(obj::MixedObjective, ::AbstractModel{T,M,E}, args...) where {T,M,E<:ImplicitError} = 
+    throw(ErrorException("$(obj.name.name) objective does not support `ImplicitError`. Use a different error model."))
+
+
+################################################################################
+##########                 Evaluation of loglikelihoods               ##########
+################################################################################
+
+# Monte Carlo samples for p(y | ŷ)
+_logpdf(dist::AbstractVector{<:AbstractVector{<:MultivariateDistribution}}, y::AbstractVector{<:AbstractVector{<:Real}}) = 
+    _logpdf.(dist, (y, ))
+
+# p(y | ŷ)
+_logpdf(dist::AbstractVector{<:MultivariateDistribution}, y::AbstractVector{<:AbstractVector{<:Real}}) = 
+    sum(_logpdf.(dist, y))
+
+# p(yᵢ | ŷᵢ)
+_logpdf(dist::MultivariateDistribution, y::AbstractVector{<:Real}) = 
+    logpdf(dist, y)
+_logpdf(dist::AbstractVector{<:MultivariateDistribution}, y::AbstractVector{<:Real}) = 
+    _logpdf.(dist, (y, ))
+
+# p(η) if multi-dimensional η
+_logpdf(dist::MultivariateDistribution, y::AbstractMatrix{<:Real}) = 
+    sum(_logpdf.((dist, ), eachcol(y)))
+_logpdf(dist::MultivariateDistribution, y::AbstractVector{<:AbstractMatrix{<:Real}}) = 
+    _logpdf.((dist, ), y)
+# p(η) if single η per individual
+_logpdf(dist::UnivariateDistribution, y::AbstractVector{<:Real}) = 
+    sum(map(Base.Fix1(logpdf, dist), y))
+_logpdf(dist::UnivariateDistribution, y::AbstractVector{<:AbstractVector{<:Real}}) = 
+    _logpdf.((dist,), y)
+# q(η)
+_logpdf(dist::AbstractVector{<:MultivariateDistribution}, y::AbstractMatrix{<:Real}) = 
+    sum(logpdf.(dist, eachcol(y)))
+_logpdf(dist::AbstractVector{<:UnivariateDistribution}, y::AbstractVector{<:Real}) = 
+    sum(logpdf.(dist, eachcol(y)))
+################################################################################
+##########                Fixed effects based objectives              ##########
+################################################################################
+
+forward(::AbstractObjective, model::AbstractModel, data, ps, st) = predict(model, data, ps, st)[1]
+
+# TODO: Also return st
+function forward(obj::AbstractObjective, model::AbstractDEModel, data, ps, st)
+    z, _ = predict_de_parameters(obj, model, data, ps, st)
+    return forward_ode_with_dv(model, data, z)
+end
+
+##### Sum of squared errors
+
 """
     SSE()
 
 Sum of squared errors objective function:
 
-    L(p) = Σᵢ (yᵢ - f(xᵢ; p))²
+    L(ps) = Σᵢ (yᵢ - f(xᵢ; ps))²
 """
 struct SSE <: FixedObjective end
 
-objective(model::M, args...) where {M<:AbstractModel} = objective(model.objective, model, args...)
-
-"""Expects that forward returns a one-dimensional array"""
-function objective(obj::SSE, model, container::Union{AbstractIndividual, Population}, p_)
-    p = constrain(obj, p_)
-    ŷ, st = forward_adjoint(model, container, p)
-    return sse(get_y(container), ŷ)
+function sse(model, data, ps, st) 
+    ŷ = forward(SSE(), model, data, ps, st)
+    return sse(get_y(data), ŷ)
 end
 
-sse(y::T, ŷ::T) where T<:AbstractVector{<:AbstractVector} = sum(abs2, reduce(vcat, y - ŷ))
-sse(y::AbstractVector{<:AbstractVector}, ŷ::AbstractVector{<:Real}) = sum(abs2, reduce(vcat, y) - ŷ)
+sse(y::AbstractVector{<:AbstractVector{<:Real}}, ŷ::AbstractVector{<:AbstractVector{<:Real}}) = sum(abs2, reduce(vcat, y - ŷ))
+sse(y::AbstractVector{<:AbstractVector{<:Real}}, ŷ::AbstractVector{<:Real}) = sum(abs2, reduce(vcat, y) - ŷ)
 
-# TODO: Force the D in LogLikelihood to have eltype Float32
+"""Expects that forward returns a one-dimensional array"""
+objective(obj::SSE, model::AbstractModel, data::Union{AbstractIndividual, Population}, ps, st) = 
+    sse(model, data, constrain(obj, model, ps), st)
+
+##### Loglikelihood based objectives
 """
-    LogLikelihood{D, E}()
+    LogLikelihood()
 
 LogLikelihood based objective function:
 
-    L(p) = p(y | p, σ)
+    L(ps) = p(y | ps)
 
-Default uses a Normal / MultivariateNormal loglikelihood function 
-(as represented by `D`). Different distributions can be passed, and custom 
-parameters can be controlled using the Custom ErrorModel.
+Custom parameterizations and distributions can be controlled using CustomError.
 """
-struct LogLikelihood{D<:Sampleable, E<:ErrorModel} <: FixedObjective 
-    error::E
-    # Constructors
-    LogLikelihood(error::E=Additive()) where {E<:ErrorModel} = new{Normal{Float32},E}(error)
-    LogLikelihood(::Type{D}, error::E=Additive()) where {D<:Sampleable,E<:ErrorModel} = new{D,E}(error)
+struct LogLikelihood <: FixedObjective end
+
+#TODO: join these with a forward function?
+function Distributions.loglikelihood(obj::LogLikelihood, model, data, ps, st)
+    ŷ = forward(obj, model, data, ps, st)
+    dist = make_dist(model, ŷ, ps)
+    return _logpdf(dist, get_y(data))
 end
 
-"""Expects that forward returns a one-dimensional array"""
-function objective(obj::LogLikelihood{D,E}, model::M, container::Union{AbstractIndividual, Population}, p_) where {D,E,M<:AbstractModel}
-    p = constrain(obj, p_)
-    ŷ, st = forward_adjoint(model, container, p)
-    σ² = variance(obj.error, p, ŷ)
-    return -ll(D, ŷ, σ², container.y)
-    # return -logpdf(MultivariateNormal(ŷ, σ²), reduce(vcat, container.y))
+objective(obj::LogLikelihood, model::AbstractModel, data, ps, st) = 
+    -loglikelihood(obj, model, data, constrain(model, ps), st)
+
+objective(::LogLikelihood, ::AbstractModel{T,M,E}, args...) where {T,M,E<:ImplicitError} = 
+    throw(ErrorException("The LogLikelihood objective does not support `ImplicitError`. Use a different error model."))
+
+##### get differential equation parameters
+
+function predict_de_parameters(::Union{FixedObjective, Type{FixedObjective}}, model::AbstractDEModel, data, ps, st)
+    ζ, st = predict_typ_parameters(model, data, ps, st)
+    return construct_p(ζ, data), st
 end
 
-ll(::Type{<:Normal}, ŷ::T, σ², y::T) where T<:AbstractVector{<:AbstractVector} = sum(logpdf.(MultivariateNormal.(ŷ, σ²), y))
-ll(::Type{<:Normal}, ŷ::T, σ², y) where T<:AbstractVector{<:Real} = logpdf(MultivariateNormal(ŷ, σ²), reduce(vcat, y))
+################################################################################
+##########                Mixed effects based objectives              ##########
+################################################################################
 
-
-# """Generic function for any likelihood distribution"""
-# function objective(obj::LogLikelihood, model, container::Union{AbstractIndividual, Population}, p)
-#     throw(ErrorException("Not implemented yet."))
-# end
-
-########## MixedObjectives
-
-function indicator(n::Integer, a::AbstractVector{<:Integer}, ::Type{T}=Float32) where T
-    Iₐ = zeros(T, n, length(a))
-    for i in eachindex(a)
-        Iₐ[a[i], i] = 1
-    end
-    return Iₐ
+##### Get differential equation parameters
+function predict_de_parameters(::Union{MixedObjective, Type{MixedObjective}}, model::AbstractDEModel, data, ps, st__)
+    ζ, st_ = predict_typ_parameters(model, data, ps, st__)
+    η, st = get_random_effects(ps, st_)
+    return construct_p(ζ, η, data), st
 end
-
-# TODO: update_mask!(objective, idxs, p_length) # When we want to choose new set of parameters with random effects. 
-# TODO: set_mask!(objective, p_length) -> should also update model.p
-
-"""
-    init_omega(rng, n)
-    
-Initialization function for the MultivariateNormal prior on random effect 
-parameters.
-"""
-function init_omega(rng::Random.AbstractRNG, n, ::Type{T}=Float32; omega_dist::Sampleable=Normal(0.2, 0.03), C_shape::Real=50.) where T<:Float32 
-    ω_init = zeros(T, n)
-    Random.rand!(rng, omega_dist, ω_init)
-    ω_init = max.(ω_init, zero(T)) .+ T(1e-3)
-
-    C_init = zeros(T, n, n)
-    Random.rand!(rng, LKJ(n, C_shape), C_init)
-
-    return (omega = (var = softplus_inv.(ω_init), corr = Bijectors.VecCorrBijector()(C_init)),)
-end
-
-(init_omega)(; kwargs...) = init_omega$(; kwargs...)
-
-init_params(model) = init_params(model.rng, model.objective, model.ann)
-init_params!(model) = update!(model, init_params(model.rng, model.objective, model.ann))
-init_params(rng, objective, ann::Lux.AbstractExplicitLayer) = init_params(rng, objective, Lux.setup(rng, ann)...)
-
-function init_params(rng, objective, ps::NamedTuple, st::NamedTuple)
-    p = (weights = ps,)
-    # Init error model
-    if !(objective isa SSE)
-        p = merge(p, (error = objective.error.init_f(rng, objective.error), ))
-    end
-    # init random effect prior
-    if objective isa MixedObjective
-        p = merge(p, objective.init_prior(rng, length(objective.idxs)))
-    end
-    # Init objective-specific parameters:
-    return init_params(rng, objective, p), st
-end
-
-init_params(::Random.AbstractRNG, ::O, p::NamedTuple) where {O<:AbstractObjective} = p
-
-function init_phi(model::AbstractModel{O,M,P}, pop::Population; sigma_dist::Sampleable=Normal(0.2, 0.03), C_shape::Real=50.) where {O<:MixedObjective,M,P} 
-    n = length(pop)
-    num_random_effects = size(model.p.omega.var, 1)
-    T = eltype(model.p.omega.var)
-    
-    sigma_init = zeros(T, num_random_effects, n)
-    Random.rand!(model.rng, sigma_dist, sigma_init)
-    sigma_init = max.(sigma_init, zero(T))  .+ T(1e-3)
-    
-    p_ = (mean = zeros(T, num_random_effects, n), sigma = softplus_inv.(sigma_init),)
-    if FullRank in typeof(model.objective).parameters
-        C_init = zeros(T, num_random_effects, num_random_effects, n)
-        Random.rand!(model.rng, LKJ(num_random_effects, C_shape), C_init)
-        C_init_vec = reduce(hcat, [Bijectors.VecCholeskyBijector(:L)(C_init[:, :, i]) for i in 1:size(C_init)[end]])
-        p_ = merge(p_, (corr = C_init_vec, ))
-    end
-
-    return p_
-end
-
-(init_phi)(; kwargs...) = init_phi$(; kwargs...)
-
-abstract type AbstractVariationalApproximation end
-struct MeanField <: AbstractVariationalApproximation end
-struct FullRank <: AbstractVariationalApproximation end
-
-abstract type AbstractQuadratureApproximation end
-struct MonteCarlo <: AbstractQuadratureApproximation
-    n_samples::Int # Number of samples per individual
-    MonteCarlo() = new(1)
-    MonteCarlo(i) = new(i)
-end # Takes N samples for each individual at each iteration
-struct SampleAverage{T} <: AbstractQuadratureApproximation 
-    n_samples::Int # Number of samples per individual
-    samples::Vector{T} # samples need to be initialized based on the population. We then push! additional matrices to this vector
-    SampleAverage(n=20, samples::T=Matrix{Float32}[]) where T = new{T}(n, samples)
-end # N fixed samples
-
-Base.show(io::IO, sa::SampleAverage) = print(io, "SampleAverage($(sa.n_samples), $(isempty(sa.samples) ? "uninitialized" : "..."))")
-
-struct VariationalELBO{V<:AbstractVariationalApproximation,A<:AbstractQuadratureApproximation,E<:ErrorModel,F1,F2} <: MixedObjective
-    error::E
-    approx::A # MonteCarlo or SampleAverage
     idxs::Vector{Int}
-    # mask::ElasticArray{T} # Needs to be an ElasticArray in order to be extended at later time.
-    init_prior::F1
-    init_phi::F2
-    VariationalELBO(idxs::AbstractVector{<:Int}; kwargs...) = VariationalELBO(Additive(), idxs; kwargs...)
-    function VariationalELBO(error::E, idxs::AbstractVector{<:Int}; type::V=FullRank(), approx::A=MonteCarlo(), init_prior::F1=init_omega, init_phi::F2=init_phi) where {V<:AbstractVariationalApproximation,A<:AbstractQuadratureApproximation,E<:ErrorModel,F1,F2}
-        new{V,A,E,F1,F2}(error, approx, idxs, init_prior, init_phi)
+
+##### LogJoint for the optimization of etas
+
+function optimize_etas(model::AbstractDEModel, population::Population, ps_, st)
+    ps = constrain(model, ps_)
+    etas = optimize_etas.((model, ), population, (ps, ), (st, ))
+    return reduce(hcat, etas)
+end
+
+function optimize_etas(model::AbstractDEModel{T,P,M,E,S}, individual::AbstractIndividual, ps_, st) where {T,P,M,E,S}
+    ps = constrain(model, ps_)
+    result = Optim.optimize(
+        eta -> -logjoint(model, individual, ps, _etas_to_state(st, eta)), 
+        zeros(T, size(st.phi.mask, 2)),
+        # Optim.Options() # TODO: set obj_fn tolerance
+        )
+    return result.minimizer
+end
+
+function logjoint(model::AbstractDEModel, individual::AbstractIndividual, ps, st_)
+    # TODO: would be nice if we could do this differently, i.e. 
+    # loglikelihood(model, data, z, ps, st), so that we don't have to repeat 
+    # this. This also works with stuff above.
+    z, st = predict_de_parameters(MixedObjective, model, individual, ps, st_)
+    ŷ = forward_ode_with_dv(model, individual, z)
+    dist = make_dist(model, ŷ, ps)
+    LL = _logpdf(dist, get_y(individual))
+
+    prior = _get_prior(ps)
+    
+    return LL + logprior(prior, st.phi.eta)
+end
+
+_etas_to_state(st, etas) = merge(st, (phi = merge(st.phi, (eta = etas, )), ))
+
+##### VariationalELBO
+
+abstract type VariationalApproximation end
+struct MeanField <: VariationalApproximation end
+struct FullRank <: VariationalApproximation end
+
+# TODO: replace Val{true} with Static.True (i.e. Lux.True)
+struct VariationalELBO{approx<:VariationalApproximation,path_deriv} <: MixedObjective 
+    idxs::Vector{Int}
+    VariationalELBO(idxs, approx; path_deriv::Bool=true) = 
+        new{typeof(approx),Val{path_deriv}}(idxs)
+    function VariationalELBO(idxs; path_deriv::Bool=true)
+        approx = length(idxs) > 1 ? FullRank() : MeanField()
+        return new{typeof(approx),Val{path_deriv}}(idxs)
     end
 end
 
-init_samples!(obj::VariationalELBO{V,A,E,F1,F2}, population::Population) where {V,A<:SampleAverage,E,F1,F2} = init_samples!(obj.approx, length(obj.idxs), length(population))
-
-function init_samples!(sa::SampleAverage, k::Int, n::Int) 
-    empty!(sa.samples)
-    push!(sa.samples, eachslice(randn(Float32, k, sa.n_samples, n), dims=3)...)
-    return nothing
+function Distributions.loglikelihood(obj::VariationalELBO, model::AbstractDEModel, container, ps, st_)
+    z, st = predict_de_parameters(obj, model, container, ps, st_)
+    ŷs = forward_ode_with_dv(model, container, z)
+    dist = make_dist(model, ŷs, ps)
+    return _logpdf(dist, get_y(container)), st
 end
 
-Base.show(io::IO, ::SSE) = print(io, "SSE")
-Base.show(io::IO, obj::LogLikelihood{D,E}) where {D,E} = print(io, "LogLikelihood{$(D.name.name), $(obj.error)}")
-Base.show(io::IO, obj::VariationalELBO{V,A,E,F1,F2}) where {V,A,E,F1,F2} = print(io, "VariationalELBO{$(V.name.name), $(obj.approx), $(obj.error)}")
-Base.show(io::IO, obj::O) where {O<:AbstractObjective} = print(io, "$(O.name.name){$(obj.error)}")
+logprior(::VariationalELBO, ps, st) = logprior(_get_prior(ps), st.phi.eta)
 
-adapt!(::Population, ::AbstractModel{O,M,P}) where {O<:FixedObjective,M,P} = nothing
-function adapt!(population::Population, model::AbstractModel{O,M,P}) where {O<:MixedObjective,M,P} 
-    adapt!.(population, (model,))
-    return nothing
+_get_prior(ps::NamedTuple) = _get_prior(only(ps.omega))
+_get_prior(Ω::Symmetric) = TuringDenseMvNormal(zeros(eltype(Ω), size(Ω, 1)), Ω)
+_get_prior(L::LowerTriangular) = TuringDenseMvNormal(zeros(eltype(L), size(L, 1)), Cholesky(L))
+_get_prior(ω::Real) = Normal(zero(ω), ω)
+
+logprior(prior::Distribution, η) = _logpdf(prior, η)
+
+logq(obj::VariationalELBO{approx,path_deriv}, ps, st) where {approx,path_deriv<:Val{false}} = logq(getq(obj, ps.phi), st.phi.eta)
+logq(obj::VariationalELBO{approx,path_deriv}, ps, st) where {approx,path_deriv<:Val{true}} = logq(getq(obj, ignore_derivatives(ps.phi)), st.phi.eta)
+
+logq(q, η::AbstractArray{<:Real}) = _logpdf(q, η)
+# For monte carlo samples:
+logq(q::AbstractVector{<:MultivariateDistribution}, η::AbstractVector{<:AbstractMatrix{<:Real}}) = _logpdf.((q,), η) # Multivariate eta
+logq(q::MultivariateDistribution, η::AbstractVector{<:AbstractVector{<:Real}}) = _logpdf.((q, ), η) # Univariate eta
+
+# TODO: Remove the need for VariationalELBO?
+getq(::VariationalELBO, phi::NamedTuple{(:μ,:σ,),<:Tuple{<:AbstractVector{<:Real}, <:AbstractVector{<:Real}}}) = TuringDiagMvNormal(phi.μ, phi.σ)
+getq(::VariationalELBO, phi::NamedTuple{(:μ,:σ,),<:Any}) = TuringDiagMvNormal.(phi.μ, phi.σ)
+# TODO: When running constrain(obj, ps) calculate L and put in ps.phi (we could also put q in ps.phi instead; will be easier to extend in the future)
+getq(::VariationalELBO, phi::NamedTuple{(:μ,:L,)}) = TuringDenseMvNormal.(phi.μ, Cholesky.(phi.L))
+getq(::VariationalELBO, phi::NamedTuple{(:μ,:Σ,)}) = TuringDenseMvNormal.(phi.μ, phi.Σ)
+ 
+function elbo(obj::VariationalELBO, model::AbstractDEModel, container, ps, st_)
+    LL, st = loglikelihood(obj, model, container, ps, st_)
+    return LL + logprior(obj, ps, st) - logq(obj, ps, st)
 end
 
-function adapt!(individual::AbstractIndividual, model::AbstractModel{O,M,P}) where {O<:MixedObjective,M,P} 
-    empty!(individual.eta)
-    push!(individual.eta, zeros(eltype(individual.eta), length(model.objective.idxs))...)
-    return nothing
-end
+objective(obj::VariationalELBO, model::AbstractDEModel, container, ps, st) = 
+    -mean(elbo(obj, model, container, constrain(obj, model, ps), st))
 
 """
-    fit!(model::AbstractModel, population::Population, opt, epochs; callback)
-
-Fits the model in place to the data from the population. Updated model 
-parameters are stored in the model. Can be passed a callback function that can 
-be used to monitor training. The callback is called with the current epoch and 
-loss after gradient calculation and before updating model parameters.
+Hack that solves accumulation of gradients of Diagonal variables in FO and FOCE.
 """
-function fit!(model::AbstractModel{O,M,P,S}, population::Population, opt, epochs::Int; callback=(e,l) -> nothing) where {O<:FixedObjective,M,P,S}
-    opt_state = Optimisers.setup(opt, model.p)
-    for epoch in 1:epochs
-        loss, back = Zygote.pullback(p -> objective(model, population, p), model.p)
-        grad = first(back(1))
-        callback(epoch, loss)
-        opt_state, new_p = Optimisers.update(opt_state, model.p, grad)
-        update!(model, new_p)
-    end
-    return nothing
-end
+Zygote.accum(x::NamedTuple{(:diag,), <:Tuple{<:AbstractVector}}, ::Nothing) = Diagonal(x.diag)
 
-# TODO: allow for multiple optimizers (one for p and one for phi)
-# TODO: allow passing previous phi
-function fit!(model::AbstractModel{O,M,P,S}, population::Population, opt, epochs::Int; callback=(e,l) -> nothing) where {O<:VariationalELBO,M,P,S}
-    phi = model.objective.init_phi(model, population)
 
-    if typeof(model.objective.approx) <: SampleAverage
-        init_samples!(model.objective, population)
-    end # TODO: make this optional
-
-    opt_state = Optimisers.setup(opt, model.p)
-    opt_state_phi = Optimisers.setup(opt, phi)
-    for epoch in 1:epochs
-        loss, back = Zygote.pullback((p, phi) -> objective(model, population, p, phi), model.p, phi)
-        grad_p, grad_phi = back(1)
-        callback(epoch, loss)
-        opt_state, new_p = Optimisers.update(opt_state, model.p, grad_p)
-        opt_state_phi, phi = Optimisers.update(opt_state_phi, phi, grad_phi) # TODO: Natural Gradient descent.
-        update!(model, new_p)
-    end
-    return phi
-end
