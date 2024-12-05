@@ -98,11 +98,11 @@ passed ode_fn.
 - `dv_compartment::Int`: The index of the compartment for the prediction of the dependent variable. Default = 1.
 - `sensealg`: Sensitivity algorithm to use for the calculation of gradients of the parameters with respect to the DESolution.
 """
-DeepCompartmentModel(ode_fn::Function, num_comp::Int, model, error::AbstractErrorModel, ::Type{T} = Float32; kwargs...) where T = 
-    DeepCompartmentModel(ODEProblem(ode_fn, zeros(T, num_comp), (T(-0.1), one(T)), T[]), model, error, T; kwargs...)
+DeepCompartmentModel(ode_fn::Function, num_partials::Int, model, error::AbstractErrorModel, ::Type{T} = Float32; kwargs...) where T = 
+    DeepCompartmentModel(ODEProblem(ode_fn, zeros(T, num_partials), (T(-0.1), one(T)), T[]), model, error, T; kwargs...)
 
-DeepCompartmentModel(ode_fn::Function, num_comp::Int, model, ::Type{T} = Float32; kwargs...) where T = 
-    DeepCompartmentModel(ODEProblem(ode_fn, zeros(T, num_comp), (T(-0.1), one(T)), T[]), model, ImplicitError(), T; kwargs...)
+DeepCompartmentModel(ode_fn::Function, num_partials::Int, model, ::Type{T} = Float32; kwargs...) where T = 
+    DeepCompartmentModel(ODEProblem(ode_fn, zeros(T, num_partials), (T(-0.1), one(T)), T[]), model, ImplicitError(), T; kwargs...)
 
 """
 DCM(args...; kwargs...)
