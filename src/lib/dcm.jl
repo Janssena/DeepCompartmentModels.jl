@@ -80,7 +80,6 @@ function _estimate_num_partials(ode_fn::Function)
     return maximum(indexes_set)
 end
 
-
 """
 DeepCompartmentModel(ode_fn, num_partials, model, error, T=Float32; kwargs...)
 
@@ -135,63 +134,3 @@ function predict(dcm::DeepCompartmentModel, data, ps_, st; individual::Bool = fa
 
     return forward_ode(dcm, data, p; kwargs...)
 end
-
-
-# Arguments
-- `model::DeepCompartmentModel`: The model to use to perform the prediction.
-- `container::Union{AbstractIndividual, Population}`: A population or Individual to perform the predictions for.
-- `p`: Model parameters. Default = model.p.
-- `full`: Return the output for all model compartments.
-- `interpolate`: Saves additional time points to return a continuous solution of the DE.
-- `get_dv`: Directly returns the predictions for the dv compartment.
-- `saveat`: Custom time points to save the solution.
-- `sensealg`: Sensitivity algorithm to use for gradient calculations.
-"""
-function forward(model::DeepCompartmentModel, container::Union{AbstractIndividual, Population}, p; get_dv=Val(false), kwargs...) # Everything else → pass z directly
-    ζ_, st = predict_typ_parameters(model, container, p)
-    ζ = construct_p(ζ_, container)
-    return forward_ode(model, container, ζ, get_dv; kwargs...), st
-end
-
-forward_adjoint(model::DeepCompartmentModel, args...) = forward(model, args...; get_dv=Val(true), sensealg=ForwardDiffSensitivity(;convert_tspan=true))
-# TODO: Adding converted tspan is type unsafe, investigate InterpolatingAdjoint & GaussAdjoint
-
-##### Variational Inference: TODO: Make more general, i.e. something like forward_adjoint_with_sample(...)?
-
-function objective(obj::VariationalELBO{V,A,E,F1,F2}, model::DeepCompartmentModel, population::Population{T,I}, p_::NamedTuple, phi_::NamedTuple) where {V,A,E,F1,F2,T<:Static,I}
-    p = constrain(obj, p_)
-    phi = constrain_phi(V, phi_)
-    ζ, st = predict_typ_parameters(model, population, p)
-    eta_mask = @ignore_derivatives indicator(size(ζ, 1), model.objective.idxs)
-
-    ϵ = take_mc_samples(eltype(ζ), model.objective.approx, length(model.objective.idxs), length(population))
-    return -sum(elbo.((model,), population, (eta_mask,), eachcol(ζ), (p,), eachcol(phi.mean), phi.L, ϵ))
-end
-
-take_mc_samples(::Type{T}, sa::SampleAverage, args...) where T<:Real = sa.samples # very large vector we should reshape?
-take_mc_samples(::Type{T}, mc::MonteCarlo, k, n) where T<:Real = eachslice(randn(T, k, mc.n_samples, n), dims=3)
-
-"""These always use the path derivative gradient estimator by Roeder et al."""
-# getq(μ, L::AbstractMatrix) = @ignore_derivatives MvNormal(μ, L * L')
-# getq(μ, σ::AbstractVector) = @ignore_derivatives MvNormal(μ, σ)
-getq(μ, L::AbstractMatrix) = @ignore_derivatives MvNormal(μ, L * L')
-getq(μ, σ::AbstractVector) = @ignore_derivatives MvNormal(μ, σ)
-getq_and_eta(μ, L::AbstractMatrix, ϵ) = (getq(μ, L), μ .+ L * ϵ)
-getq_and_eta(μ, σ::AbstractVector, ϵ) = (getq(μ, σ), μ .+ σ .* ϵ)
-
-function elbo(model, individual::AbstractIndividual, eta_mask, ζ::AbstractVector, p::NamedTuple, μ::AbstractVector, L::AbstractMatrix, ϵ::AbstractMatrix) 
-    q, η = getq_and_eta(μ, L, ϵ)
-    return mean(elbo.((model,), (individual,), (eta_mask,), (ζ,), (p,), (q,), eachcol(η)))
-end
-
-# TODO: Calculate z_ one step before this to reduce inputs?
-function elbo(model::DeepCompartmentModel, individual::AbstractIndividual, eta_mask, ζ::AbstractVector, p::NamedTuple, q, η::AbstractVector)
-    z_ = ζ .* exp.(eta_mask * η)
-    z = construct_p(z_, individual)
-    ŷ = forward_ode(model, individual, z, Val(true); sensealg=ForwardDiffSensitivity(;convert_tspan=true))
-    Σ = variance(model, p, ŷ)
-    y = ignore_derivatives(individual.y)
-    return logpdf(MvNormal(ŷ, Σ), y) + logpdf(MvNormal(zero(η), p.omega), η) - logpdf(q, η)
-end
-
-Base.show(io::IO, dcm::DeepCompartmentModel) = print(io, "DeepCompartmentModel{$(dcm.problem.f.f), $(dcm.objective)}")

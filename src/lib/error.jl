@@ -146,37 +146,3 @@ function _sample_sigma(rng::Random.AbstractRNG, error::AbstractErrorModel, init_
 end
 
 (init_sigma)(; kwargs...) = init_sigma$(; kwargs...)
-
-init_sigma(::Random.AbstractRNG, ::E) where E<:Custom = throw(ErrorException("`init_sigma` method not implemented. Overload this function (and the `variance` function) when using Custom error."))
-variance(::E, p, ŷ::AbstractVector) where {E<:Custom} = throw(ErrorException("`variance` method not implemented. Overload this function (and the `init_sigma` function) when using Custom error."))
-
-"""
-    variance(model, p, y)
-
-Returns the variance of `y` based on the `model`.
-
-# Arguments:
-- `model::AbstractModel`: The model.
-- `p`: Constrained model parameters.
-- `y`: Observations or predictions for which to calculate the variance.
-"""
-variance(model::AbstractModel, args...)  = variance(model.objective.error, args...)
-variance(error::E, p, ŷs::AbstractVector{<:AbstractVector}) where E<:ErrorModel = variance.((error,), (p,), ŷs)
-variance(::E, p, ŷ::AbstractVector{<:Real}) where {E<:Additive} = Diagonal(repeat(p.error.sigma.^2, length(ŷ)))
-variance(::E, p, ŷ::AbstractVector{<:Real}) where {E<:Proportional} = Diagonal((p.error.sigma .* ŷ).^2)
-variance(::E, p, ŷ::AbstractVector{<:Real}) where {E<:Combined} = Diagonal((p.error.sigma[1] .+ p.error.sigma[2] .* ŷ).^2)
-
-"""
-    std(model::AbstractModel, prediction::AbstractVector)
-
-Returns the standard deviation of `predictions` based on the `model`.
-# Arguments:
-- `model::AbstractModel`: The model.
-- `y`: Observations or predictions for which to calculate standard deviations.
-"""
-function Statistics.std(model::M, prediction::AbstractVector) where M<:AbstractModel 
-    if model.objective isa SSE 
-        return throw(ErrorException("Models fit using the SSE objective have implicit error. Cannot obtain standard deviation of prediction."))
-    end
-    return sqrt.(diag(variance(model.objective.error, constrain(model.objective, model.p), prediction)))
-end

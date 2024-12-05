@@ -74,6 +74,30 @@ function ensure_posdef_phi!(::VariationalELBO, ps) # In some cases the diagonals
     return nothing
 end
 
+# function _run_optimization_stochastic(obj, model, data::Population, opt_state, ps, st; M::Int = Int(round(length(data) * 0.25)), epochs, callback, kwargs...)
+#     try 
+#         for epoch in 1:epochs
+#             idxs = rand(eachindex(data), M)
+#             data_batch, ps_batch, st_batch = take_batch(idxs, data, ps, st)
+#             opt_state, st_batch = update_state(opt_state, st_batch, obj, model, data, ps; kwargs...)
+#             # TODO: translate this gradient into the full gradient
+#             loss, ∇ = Zygote.withgradient(p -> objective(obj, model, data_batch, p, st_batch), ps_batch)
+#             callback(epoch, loss)
+#             opt_state, ps = Optimisers.update(opt_state, ps, first(∇))
+#         end
+
+#         return opt_state, ps, st
+#     catch e
+#         if e isa InterruptException
+#             println()
+#             @info "User interrupted, gracefully exiting optimization..."
+#             return opt_state, ps, st
+#         else 
+#             throw(e)
+#         end
+#     end
+# end
+
 ################################################################################
 ##########                     Minibatch training                     ##########
 ################################################################################
@@ -115,6 +139,9 @@ _take_batch_from_phi(idxs, phi::NamedTuple{(:epsilon,:mask),<:Tuple{<:AbstractMa
 _take_batch_from_phi(idxs, phi::NamedTuple{(:epsilon,:mask),<:Tuple{<:AbstractArray{<:Real, 3},<:AbstractMatrix}}) = 
     (epsilon = phi.epsilon[:, idxs, :], mask = phi.mask, )
     
+# TODO: fit_batched # Here we thread over mini-batches of data
+
+# TODO: fit_stochastic # Here we take a random subsample of the data and train on only that. Check on how to do this with VI
 
 ################################################################################
 ##########                        update_state                        ##########
@@ -154,3 +181,6 @@ function update_state_epsilon(st::NamedTuple, num_samples = 1)
         (path, x) -> :epsilon in path ? randn(Random.GLOBAL_RNG, eltype(x), size(x)[begin:end-1]..., num_samples) : x, st; cache = nothing)
         # (path, x) -> :epsilon in path ? _randn_epsilon(x, num_samples) : x, st; cache = nothing)
 end
+
+# _randn_epsilon(x::AbstractMatrix{<:Real}, num_samples) = randn(Random.GLOBAL_RNG, eltype(x), size(x, 1), num_samples)
+# _randn_epsilon(x::AbstractVector{AbstractMatrix{<:Real}}, num_samples) = [randn(Random.GLOBAL_RNG, eltype(first(x)), size(first(x))) for _ in 1:num_samples]

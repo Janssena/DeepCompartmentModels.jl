@@ -13,7 +13,7 @@ import Zygote.ChainRules: @ignore_derivatives, ignore_derivatives
 import Lux.Functors
 import Optimisers
 import SciMLBase
-# import FiniteDiff
+import FiniteDiff
 import Zygote
 import Random
 import Optim
