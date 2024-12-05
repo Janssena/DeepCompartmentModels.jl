@@ -70,6 +70,8 @@ forward_ode(model::AbstractDEModel, individual::AbstractIndividual, z::AbstractV
 # The below is used in objective functions
 forward_ode_with_dv(model::AbstractDEModel, individual::AbstractIndividual, z::AbstractVecOrMat; sensealg = model.sensealg, kwargs...) = 
     Array(forward_ode(model.problem, individual, z; sensealg, kwargs...))[model.dv_compartment, :] # old
+    # Vector(forward_ode(model.problem, individual, z; sensealg, save_idxs = [model.dv_compartment], kwargs...)) # TODO: this saves allocations but is not type safe.
+
 
 for op = (:forward_ode, :forward_ode_with_dv)
     # When running on a whole population given the full ODE parameter matrix
@@ -125,3 +127,10 @@ construct_p(z::AbstractMatrix{T}, η::AbstractMatrix{T}, ::Population) where {T<
 construct_p(z::AbstractMatrix{T}, η::AbstractVector{<:AbstractMatrix{T}}, population::Population) where T<:Real = 
     construct_p.((z, ), η, (population, ))::Vector{Matrix{T}}
 
+
+_create_z(ζ::AbstractMatrix{<:Real}, η::AbstractMatrix{<:Real}) = ζ .* exp.(η)
+_create_z(ζ::AbstractVector{<:Real}, η::AbstractMatrix{<:Real}) = ζ .* exp.(dropdims(η; dims = 2))
+_create_z(ζ::AbstractMatrix{<:Real}, η::AbstractVector{<:AbstractMatrix{<:Real}}) = _create_z.((ζ, ), η)
+_create_z(ζ::AbstractVector{<:AbstractMatrix{<:Real}}, η::AbstractVector{<:AbstractMatrix{<:Real}}) = _create_z.(ζ, η)
+
+# TODO: Make mixed-effects work for time-dependent covariates

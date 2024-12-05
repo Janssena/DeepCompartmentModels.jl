@@ -72,4 +72,3 @@ function (s::StatefulLuxLayer{Lux.True,<:AbstractLuxContainerLayer,<:Any,<:Any})
     y, _ = getproperty(s.model, layer)(x, ps, s.st[layer])    
     return y
 end
-

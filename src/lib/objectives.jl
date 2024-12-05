@@ -41,6 +41,9 @@ _logpdf(dist::AbstractVector{<:MultivariateDistribution}, y::AbstractMatrix{<:Re
     sum(logpdf.(dist, eachcol(y)))
 _logpdf(dist::AbstractVector{<:UnivariateDistribution}, y::AbstractVector{<:Real}) = 
     sum(logpdf.(dist, eachcol(y)))
+# _logpdf(dist::MultivariateDistribution, y::AbstractVector{<:AbstractVector{<:Real}}) = 
+#     logpdf.((dist, ), y)
+
 ################################################################################
 ##########                Fixed effects based objectives              ##########
 ################################################################################
@@ -95,6 +98,33 @@ function Distributions.loglikelihood(obj::LogLikelihood, model, data, ps, st)
     return _logpdf(dist, get_y(data))
 end
 
+# For models resulting in multiple dists due to MonteCarlo sampling
+# _logpdf(dist::AbstractVector{<:AbstractVector{<:Distribution}}, y::AbstractVector{<:AbstractVector{<:Real}}) = 
+#     _logpdf.(dist, (y, ))
+
+# For dists related to a specific array in y
+# _logpdf(dist::AbstractVector{<:Distribution}, y::AbstractVector{<:AbstractVector{<:Real}}) = 
+#     sum(logpdf.(dist, y))
+
+# _logpdf(dist::AbstractVector{<:Distribution}, y::AbstractVector{<:AbstractMatrix{<:Real}}) = 
+#     logpdf.((dist, ), y)
+
+# _logpdf(dist::Distribution, y::AbstractVector{<:AbstractArray{<:Real}}) = 
+#     _logpdf.((dist, ), y)
+
+# _logpdf(dist::Distribution, y::AbstractArray{<:Real}) = sum(logpdf(dist, y))
+# _logpdf(dist::AbstractVector{<:Distribution}, y::AbstractVector{<:Real}) = logpdf.(dist, (y, ))
+# _logpdf(dist::AbstractVector{<:Distribution}, y::AbstractMatrix{<:Real}) = sum(logpdf.(dist, eachcol(y)))
+
+
+
+
+
+# _logpdf(dist::Sampleable, y::AbstractVector{<:AbstractVector{<:Real}}) = 
+#     sum(logpdf.((dist, ), y))
+
+# _logpdf(dist::Sampleable, y::AbstractVector{<:Real}) = logpdf(dist, y)
+
 objective(obj::LogLikelihood, model::AbstractModel, data, ps, st) = 
     -loglikelihood(obj, model, data, constrain(model, ps), st)
 
@@ -112,13 +142,110 @@ end
 ##########                Mixed effects based objectives              ##########
 ################################################################################
 
+# TODO: version that works with time-dependent z
+function ∂forward_ode_∂η(obj::MixedObjective, model::AbstractDEModel, individual::AbstractIndividual, z::AbstractVector{<:Real})
+    jac = FiniteDiff.finite_difference_jacobian(
+        z_ -> forward_ode_with_dv(model, individual, z_), 
+        z, 
+        Val(:central); # :forward is mutating
+        colorvec = maximum(obj.idxs)
+    )
+    return jac[:, obj.idxs] .* z[obj.idxs]' # Chain rule: ∂F/∂η = ∂F/∂z ⋅ ∂z/∂η
+end
+
 ##### Get differential equation parameters
 function predict_de_parameters(::Union{MixedObjective, Type{MixedObjective}}, model::AbstractDEModel, data, ps, st__)
     ζ, st_ = predict_typ_parameters(model, data, ps, st__)
     η, st = get_random_effects(ps, st_)
     return construct_p(ζ, η, data), st
 end
+
+##### First-order (FO) approximation
+
+struct FO <: MixedObjective 
     idxs::Vector{Int}
+    FO(idxs) = new(idxs)
+end
+
+function Distributions.loglikelihood(obj::FO, model::AbstractDEModel, container, ps, st_)
+    ζ, st = predict_de_parameters(obj, model, container, ps, st_)
+    return first_order_approx(obj, model, container, ζ, ps), st
+end
+
+first_order_approx(obj::FO, model::AbstractDEModel, population::Population, ζ::AbstractMatrix{<:Real}, ps) = 
+    sum(first_order_approx.((obj, ), (model, ), population, eachcol(ζ), (ps, )))
+
+first_order_approx(obj::FO, model::AbstractDEModel, population::Population, ζ::AbstractVector{<:AbstractVector{<:Real}}, ps) = 
+    sum(first_order_approx.((obj, ), (model, ), population, ζ, (ps, )))
+
+function first_order_approx(obj::FO, model::AbstractDEModel, individual::AbstractIndividual, ζ::AbstractVector, ps)
+    ŷ = forward_ode_with_dv(model, individual, ζ)
+    Gᵢ = ∂forward_ode_∂η(obj, model, individual, ζ)
+    Σ = var(model, ŷ, ps)
+    residuals = get_y(individual) - ŷ
+    Cᵢ = Gᵢ * _get_omega_cov(ps) * Gᵢ' + Σ
+    return logdet(Cᵢ) + residuals' * inv(Cᵢ) * residuals
+end
+
+objective(obj::FO, model::AbstractDEModel, container, ps, st) = 
+    -first(loglikelihood(obj, model, container, constrain(obj, model, ps), st))
+
+_get_omega_cov(ps::NamedTuple) = _get_omega_cov(ps.omega)
+_get_omega_cov(omega::NamedTuple{(:Σ,),<:Any}) = only(omega)
+_get_omega_cov(omega::NamedTuple{(:σ,),<:Any}) = fill(only(omega)^2, 1, 1)
+_get_omega_cov(omega::NamedTuple{(:σ²,),<:Any}) = fill(only(omega), 1, 1)
+
+##### get differential equation parameters
+
+function predict_de_parameters(::FO, model::AbstractDEModel, data, ps, st)
+    ζ, st = predict_typ_parameters(model, data, ps, st)
+    return construct_p(ζ, data), st
+end
+
+##### First-order conditional estimation (FOCE) approximation
+
+struct FOCE <: MixedObjective
+    idxs::Vector{Int}
+    FOCE(idxs::AbstractVector{<:Int}) = new(idxs)
+end
+
+function Distributions.loglikelihood(obj::FOCE, model::AbstractDEModel, container, ps, st_)
+    z, st = predict_de_parameters(obj, model, container, ps, st_)
+    return foce(obj, model, container, z, ps), st
+end
+
+# TODO: Check if this works on individuals?
+logprior(obj::FOCE, ps::NamedTuple, st::NamedTuple) = 
+    logprior(obj, inv(_get_omega_cov(ps)), st.phi.eta)
+
+logprior(::FOCE, Ω⁻¹::AbstractMatrix, η::AbstractMatrix{<:Real}) = 
+    sum(_approx_logprior.((Ω⁻¹, ), eachcol(η)))
+
+logprior(::FOCE, Ω⁻¹::AbstractMatrix, η::AbstractVector{<:Real}) = 
+    sum(η.^2 .* only(Ω⁻¹))
+
+_approx_logprior(Ω⁻¹::AbstractMatrix, η::AbstractVector) = η' * Ω⁻¹ * η
+
+foce(obj::FOCE, model::AbstractDEModel, population::Population, ζ::AbstractMatrix{<:Real}, ps) = 
+    sum(foce.((obj, ), (model, ), population, eachcol(ζ), (ps, )))
+
+foce(obj::FOCE, model::AbstractDEModel, population::Population, ζ::AbstractVector{<:AbstractVector{<:Real}}, ps) = 
+    sum(foce.((obj, ), (model, ), population, ζ, (ps, )))
+
+function foce(obj::FOCE, model::AbstractDEModel, individual::AbstractIndividual, z::AbstractVector, ps)
+    ŷ = forward_ode_with_dv(model, individual, z)
+    Gᵢ = ∂forward_ode_∂η(obj, model, individual, z)
+    Σ = var(model, ŷ, ps)
+    residuals = get_y(individual) - ŷ
+    Cᵢ = Gᵢ * _get_omega_cov(ps) * Gᵢ' + Σ
+    return logdet(Cᵢ) + residuals' * inv(Σ) * residuals # + individual.eta' * inv(Ω) * individual.eta
+end
+
+function objective(obj::FOCE, model::AbstractDEModel, container, ps_, st_) 
+    ps = constrain(obj, model, ps_)
+    LL, st = loglikelihood(obj, model, container, ps, st_)
+    return -(LL + logprior(obj, ps, st))
+end
 
 ##### LogJoint for the optimization of etas
 
@@ -210,9 +337,13 @@ end
 objective(obj::VariationalELBO, model::AbstractDEModel, container, ps, st) = 
     -mean(elbo(obj, model, container, constrain(obj, model, ps), st))
 
+# """
+# Hack that solves accumulation of gradients of LowerTriangular variables in phi 
+# and omega. Likely because we use Cholesky as in above.
+# """
+# Zygote.accum(x::NamedTuple{(:data,), <:Tuple{<:LowerTriangular}}, ::Nothing) = x.data
+
 """
 Hack that solves accumulation of gradients of Diagonal variables in FO and FOCE.
 """
 Zygote.accum(x::NamedTuple{(:diag,), <:Tuple{<:AbstractVector}}, ::Nothing) = Diagonal(x.diag)
-
-
