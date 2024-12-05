@@ -60,7 +60,7 @@ julia> Pkg.add("DeepCompartmentModels")
 
 A DCM consists of a neural network and a system of differential 
 equations. [Lux](https://lux.csail.mit.edu/stable/) is a machine learning 
-library that aids in definiting complex neural network architectures. It is 
+library that aids in defining complex neural network architectures. It is 
 automatically loaded in the REPL session after running 
 `using DeepCompartmentModels`, so you can direclty make use of functions like 
 `Lux.Chain` and `Lux.Dense`.
@@ -70,7 +70,6 @@ including one_comp! and two_comp!. Pull requests adding new compartmental
 structures are very welcome!
 
 ```julia
-import Optimisers
 import CSV
 
 using DataFrames
