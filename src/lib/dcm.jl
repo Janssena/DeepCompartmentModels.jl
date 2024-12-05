@@ -136,7 +136,7 @@ function predict(dcm::DeepCompartmentModel, data, ps_, st; individual::Bool = fa
     return forward_ode(dcm, data, p; kwargs...)
 end
 
-
+"""
 # Arguments
 - `model::DeepCompartmentModel`: The model to use to perform the prediction.
 - `container::Union{AbstractIndividual, Population}`: A population or Individual to perform the predictions for.
