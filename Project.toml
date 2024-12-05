@@ -24,6 +24,9 @@ Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 [weakdeps]
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 
+[extensions]
+DCMDataFramesExt = "DataFrames"
+
 [compat]
 Bijectors = "0.13"
 ComponentArrays = "0.15"
@@ -40,6 +43,3 @@ SciMLSensitivity = "7.58"
 Statistics = "1.10"
 Zygote = "0.6"
 julia = "1.9"
-
-[extensions]
-DCMDataFramesExt = "DataFrames"
