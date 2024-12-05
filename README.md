@@ -29,8 +29,7 @@ about drug kinetics and dynamics. Aside from improving model reliability, this
 also reduces the need for large data sets as we can supply prior knowledge about 
 drug dynamics to the model *a priori*.
 
-We are also working on bringing NeuralODE capabilities to the framework. These 
-features are available under the `HybridDCM` type.
+We are current working on bringing NeuralODE capabilities to the framework.
 
 ### Installation
 
@@ -60,7 +59,7 @@ julia> Pkg.add("DeepCompartmentModels")
 
 A DCM consists of a neural network and a system of differential 
 equations. [Lux](https://lux.csail.mit.edu/stable/) is a machine learning 
-library that aids in definiting complex neural network architectures. It is 
+library that aids in defining complex neural network architectures. It is 
 automatically loaded in the REPL session after running 
 `using DeepCompartmentModels`, so you can direclty make use of functions like 
 `Lux.Chain` and `Lux.Dense`.
@@ -70,7 +69,6 @@ including one_comp! and two_comp!. Pull requests adding new compartmental
 structures are very welcome!
 
 ```julia
-import Optimisers
 import CSV
 
 using DataFrames
@@ -86,7 +84,7 @@ ann = Chain(
     Dense(16, 4, softplus), # Our differential equation has four parameters
 )
 
-model = DCM(two_comp!, ann, 2) 
+model = DCM(two_comp!, 2, ann) # passing the number of compartments (2) is necessary here.
 
 fit!(model, population, Optimisers.Adam(), 500) # optimize neural network for 500 epochs
 
