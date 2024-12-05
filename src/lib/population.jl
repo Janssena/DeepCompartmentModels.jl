@@ -65,7 +65,7 @@ function make_timevariable(indv::I) where I<:AbstractIndividual
         res = merge(res, [field => adjusted_property])
     end
 
-    return Base.typename(I).wrapper(;res...)
+    return Base.typename(I).wrapper(res[:x], res[:t], res[:y], res[:callback];id = res[:id], initial = res[:initial])
 end
 
 # TODO: figure out why fields from individuals are accumulated through Zygote
@@ -107,6 +107,9 @@ struct Population{T,I<:AbstractIndividual} <: AbstractArray{I, 1}
     end
     Population(T::Type, indvs::AbstractVector{I}, count) where I<:AbstractIndividual = new{T, I}(indvs, count)
 end
+
+is_timevariable(::Population{T,I}) where {T<:Static,I} = false
+is_timevariable(::Population{T,I}) where {T<:TimeVariable,I} = true
 
 Base.showarg(io::IO, ::Population{T,I}, toplevel) where {T,I} = print(io, "Population{$(T.name.name), $(I.name.name)}")
 

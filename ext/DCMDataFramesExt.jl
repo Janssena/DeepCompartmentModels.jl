@@ -4,7 +4,7 @@ import DeepCompartmentModels: DeepCompartmentModels, Population, AbstractIndivid
 import DataFrames: DataFrame, groupby
 
 """
-    load(df::DataFrame, covariates; S1 = 1)
+    load(df::DataFrame, covariates, T=Float32; S1 = 1)
 
 Function to load a population from a DataFrame object. Automatically detects 
 column names and loads the data accordingly. Reports on any ambiguities with 
@@ -13,19 +13,20 @@ respect to the column names.
 # Arguments
 - `df::DataFrame`: DataFrame containing the data.
 - `covariates`: A vector of strings or symbols detailing the covariates to take.
+- `T::Type=Float32`: DataType of the resulting population.
 """
-function DeepCompartmentModels.load(df::DataFrame, covariates; S1=1)
+function DeepCompartmentModels.load(df::DataFrame, covariates, ::Type{T}=Float32; S1=1) where T
     colnames = find_colnames(df)
     df, colnames = handle_missing_rate_duration(df::DataFrame, colnames)
     df_group = groupby(df, colnames[:id])
 
     indvs = Vector{AbstractIndividual}(undef, length(df_group))
     for (i, group) in enumerate(df_group)
-        x = Vector{Float32}(group[1, covariates])
+        x = Vector{T}(group[1, covariates])
         ty = group[group[:, colnames.mdv] .== 0, [colnames.time, colnames.dv]]
-        𝐈 = Matrix{Float32}(group[group[:, colnames.mdv] .== 1, [colnames.time, colnames.amt, colnames.rate, colnames.duration]])
-        callback_ = generate_dosing_callback(𝐈; S1=Float32(S1))
-        indvs[i] = Individual(x, Float32.(ty[:, colnames.time]), Float32.(ty[:, colnames.dv]), callback_; id = first(group[:, colnames.id]))
+        𝐈 = Matrix{T}(group[group[:, colnames.mdv] .== 1, [colnames.time, colnames.amt, colnames.rate, colnames.duration]])
+        callback_ = generate_dosing_callback(𝐈, T; S1=S1)
+        indvs[i] = Individual(x, T.(ty[:, colnames.time]), T.(ty[:, colnames.dv]), callback_; id = first(group[:, colnames.id]))
     end
     
     return Population(indvs)
@@ -50,7 +51,7 @@ function check_colnames(x::NamedTuple)
     for key in keys(x)
         matched_values = filter(value -> value !== nothing, x[key])
         if length(matched_values) > 1 
-            return throw(ArgumentError("Cannot identify '$(key)' column, the following column names are ambigious: '$(join(map(a -> getfield(a, :match), matched_values), "', '"))'. Change the column name(s) you do not want to use as '$(key)' and try again."))
+            return throw(ArgumentError("Cannot identify '$(key)' column, the following column names are ambigious: '$(join(map(Base.Fix2(getfield, :match), matched_values), "', '"))'. Change the column name(s) you do not want to use as '$(key)' and try again."))
         elseif isempty(matched_values) # duration and rate column can be missing.
             if !(key ∈ [:duration, :rate])
                 return throw(ArgumentError("Cannot identify '$(key)' column, check if the column is present and try again."))
