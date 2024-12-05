@@ -29,8 +29,7 @@ about drug kinetics and dynamics. Aside from improving model reliability, this
 also reduces the need for large data sets as we can supply prior knowledge about 
 drug dynamics to the model *a priori*.
 
-We are also working on bringing NeuralODE capabilities to the framework. These 
-features are available under the `HybridDCM` type.
+We are current working on bringing NeuralODE capabilities to the framework.
 
 ### Installation
 
