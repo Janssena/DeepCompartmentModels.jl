@@ -181,6 +181,3 @@ function update_state_epsilon(st::NamedTuple, num_samples = 1)
         (path, x) -> :epsilon in path ? randn(Random.GLOBAL_RNG, eltype(x), size(x)[begin:end-1]..., num_samples) : x, st; cache = nothing)
         # (path, x) -> :epsilon in path ? _randn_epsilon(x, num_samples) : x, st; cache = nothing)
 end
-
-# _randn_epsilon(x::AbstractMatrix{<:Real}, num_samples) = randn(Random.GLOBAL_RNG, eltype(x), size(x, 1), num_samples)
-# _randn_epsilon(x::AbstractVector{AbstractMatrix{<:Real}}, num_samples) = [randn(Random.GLOBAL_RNG, eltype(first(x)), size(first(x))) for _ in 1:num_samples]
