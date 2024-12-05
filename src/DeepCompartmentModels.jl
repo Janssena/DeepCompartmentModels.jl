@@ -48,9 +48,6 @@ export  constrain
 include("lib/mixed_effects.jl");
 export  get_random_effects, make_etas
 
-include("lib/natgrads.jl");
-export  NaturalDescent, NaturalDescentMean, NaturalDescentVar, update_opt_state!
-
 include("lib/nn.jl");
 export  StandardNeuralNetwork, SNN, predict
 
