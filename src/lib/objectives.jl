@@ -98,33 +98,6 @@ function Distributions.loglikelihood(obj::LogLikelihood, model, data, ps, st)
     return _logpdf(dist, get_y(data))
 end
 
-# For models resulting in multiple dists due to MonteCarlo sampling
-# _logpdf(dist::AbstractVector{<:AbstractVector{<:Distribution}}, y::AbstractVector{<:AbstractVector{<:Real}}) = 
-#     _logpdf.(dist, (y, ))
-
-# For dists related to a specific array in y
-# _logpdf(dist::AbstractVector{<:Distribution}, y::AbstractVector{<:AbstractVector{<:Real}}) = 
-#     sum(logpdf.(dist, y))
-
-# _logpdf(dist::AbstractVector{<:Distribution}, y::AbstractVector{<:AbstractMatrix{<:Real}}) = 
-#     logpdf.((dist, ), y)
-
-# _logpdf(dist::Distribution, y::AbstractVector{<:AbstractArray{<:Real}}) = 
-#     _logpdf.((dist, ), y)
-
-# _logpdf(dist::Distribution, y::AbstractArray{<:Real}) = sum(logpdf(dist, y))
-# _logpdf(dist::AbstractVector{<:Distribution}, y::AbstractVector{<:Real}) = logpdf.(dist, (y, ))
-# _logpdf(dist::AbstractVector{<:Distribution}, y::AbstractMatrix{<:Real}) = sum(logpdf.(dist, eachcol(y)))
-
-
-
-
-
-# _logpdf(dist::Sampleable, y::AbstractVector{<:AbstractVector{<:Real}}) = 
-#     sum(logpdf.((dist, ), y))
-
-# _logpdf(dist::Sampleable, y::AbstractVector{<:Real}) = logpdf(dist, y)
-
 objective(obj::LogLikelihood, model::AbstractModel, data, ps, st) = 
     -loglikelihood(obj, model, data, constrain(model, ps), st)
 
