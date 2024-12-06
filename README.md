@@ -72,16 +72,16 @@ structures are very welcome!
 import CSV
 
 using DataFrames
-using DeepCompartmentModels
+using DeepCompartmentModels # Also re-exports Lux and Optimisers
 
 df = DataFrame(CSV.File("my_dataset.csv"))
 
 population = load(df, [:WEIGHT, :AGE])
 
 # Our data set contains two covariates, which we feed into a hidden layer with 16 neurons
-ann = Chain(
-    Dense(2, 16, relu), 
-    Dense(16, 4, softplus), # Our differential equation has four parameters
+ann = Lux.Chain(
+    Lux.Dense(2, 16, Lux.relu), 
+    Lux.Dense(16, 4, Lux.softplus), # Our differential equation has four parameters
 )
 
 obj_fn = SSE() # Minimize the sum of squared errors (equivalent to the mean squared error)
