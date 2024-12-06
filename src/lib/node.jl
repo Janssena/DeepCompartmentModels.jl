@@ -18,7 +18,7 @@ end
     
 function NeuralODE(dudt::Function, node_::Lux.AbstractLuxLayer, num_partials::Int, error::AbstractErrorModel, ::Type{T}=Float32; kwargs...) where T
     _, st = Lux.setup(Random.GLOBAL_RNG, node_)
-    node = StatefulLuxLayer{true}(node_, nothing, st)
+    node = Lux.StatefulLuxLayer{true}(node_, nothing, st)
 
     dudt_ = ODEFunction{false}(dudt$(; model = node))
     problem = ODEProblem{false}(dudt_, zeros(T, num_partials), (-T(0.1), one(T)))
@@ -33,7 +33,7 @@ function _estimate_num_partials_node(node::Lux.AbstractLuxLayer)
     end
 end
 
-function init_theta(model::NeuralODE{T,P,M,E,S}) where {T,P,M<:StatefulLuxLayer,E,S}
+function init_theta(model::NeuralODE{T,P,M,E,S}) where {T,P,M<:Lux.StatefulLuxLayer,E,S}
     # Note: model.node here is a StatefulLuxLayer
     ps, _ = Lux.setup(Random.GLOBAL_RNG, model.node.model)
     return ComponentVector((weights = ps, I = zero(T))), model.node.st
@@ -68,7 +68,7 @@ predict_de_parameters(::Union{FixedObjective, Type{FixedObjective}}, model::Neur
     ps.theta, model.node.st
 
 # Convenience function for StatefulLuxLayers that wrap AbstractLuxContainerLayers
-function (s::StatefulLuxLayer{Lux.True,<:AbstractLuxContainerLayer,<:Any,<:Any})(layer::Symbol, x, ps)
+function (s::Lux.StatefulLuxLayer{Lux.True,<:Lux.AbstractLuxContainerLayer,<:Any,<:Any})(layer::Symbol, x, ps)
     y, _ = getproperty(s.model, layer)(x, ps, s.st[layer])    
     return y
 end

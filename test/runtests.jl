@@ -27,4 +27,8 @@ begin
     @testset "Model" begin
         include("model.test.jl")
     end
+
+    @testset "DCM" begin
+        include("dcm.test.jl")
+    end
 end

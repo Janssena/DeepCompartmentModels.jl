@@ -2,7 +2,9 @@ module DeepCompartmentModels
 
 using Reexport
 
-@reexport using Lux
+@reexport import Optimisers
+@reexport import Lux
+
 @reexport using Distributions
 @reexport using DistributionsAD
 @reexport using OrdinaryDiffEq
@@ -11,13 +13,11 @@ using Reexport
 
 import Zygote.ChainRules: @ignore_derivatives, ignore_derivatives
 import Lux.Functors
-import Optimisers
 import SciMLBase
 import FiniteDiff
 import Zygote
 import Random
 import Optim
-import Lux
 
 using LinearAlgebra
 using PartialFunctions

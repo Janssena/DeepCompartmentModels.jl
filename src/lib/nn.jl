@@ -4,7 +4,7 @@
 Standard neural network architecture that directly predicts the observations `y`
 based on covariates `x`, time point `t`, and dose `d`.
 """
-struct StandardNeuralNetwork{T,M<:AbstractLuxLayer,E<:AbstractErrorModel} <: AbstractModel{T,M,E}
+struct StandardNeuralNetwork{T,M<:Lux.AbstractLuxLayer,E<:AbstractErrorModel} <: AbstractModel{T,M,E}
     model::M
     error::E
     StandardNeuralNetwork(model::M, error::E, ::Type{T}=Float32) where {T,M,E} = 

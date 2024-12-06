@@ -1,4 +1,4 @@
-struct LowDimNODE <: AbstractLuxContainerLayer{(:u, :t)}
+struct LowDimNODE <: Lux.AbstractLuxContainerLayer{(:u, :t)}
     u
     t
 end
@@ -21,10 +21,10 @@ current time point t. See [bram2023] for more details.
 
 [bram2023] Bräm, Dominic Stefan, et al. "Low-dimensional neural ODEs and their application in pharmacokinetics." Journal of Pharmacokinetics and Pharmacodynamics (2023): 1-18.
 """
-LowDimensionalNeuralODE(u::AbstractLuxLayer, t::AbstractLuxLayer, error::AbstractErrorModel, ::Type{T} = Float32; kwargs...) where T = 
+LowDimensionalNeuralODE(u::Lux.AbstractLuxLayer, t::Lux.AbstractLuxLayer, error::AbstractErrorModel, ::Type{T} = Float32; kwargs...) where T = 
     LowDimensionalNeuralODE(LowDimNODE(u, t), error, T; kwargs...)
 
-LowDimensionalNeuralODE(u::AbstractLuxLayer, t::AbstractLuxLayer, ::Type{T} = Float32; kwargs...) where T = 
+LowDimensionalNeuralODE(u::Lux.AbstractLuxLayer, t::Lux.AbstractLuxLayer, ::Type{T} = Float32; kwargs...) where T = 
     LowDimensionalNeuralODE(LowDimNODE(u, t), ImplicitError(), T; kwargs...)
 
 function LowDimensionalNeuralODE(m::LowDimNODE, error::AbstractErrorModel, ::Type{T}=Float32; kwargs...) where T
@@ -37,5 +37,5 @@ LowDimensionalNeuralODE(m::LowDimNODE, ::Type{T}=Float32; kwargs...) where T =
 
 _estimate_num_partials_node(node::LowDimNODE) = 1
 
-Base.show(io::IO, model::NeuralODE{T,D,M,E,S}) where {T,D,M<:StatefulLuxLayer{<:Any,<:LowDimNODE},E,S} = print(io, "LowDimensionalNeuralODE{$T, $(model.error)}")
+Base.show(io::IO, model::NeuralODE{T,D,M,E,S}) where {T,D,M<:Lux.StatefulLuxLayer{<:Any,<:LowDimNODE},E,S} = print(io, "LowDimensionalNeuralODE{$T, $(model.error)}")
 

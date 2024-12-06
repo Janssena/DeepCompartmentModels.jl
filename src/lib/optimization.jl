@@ -168,6 +168,9 @@ function update_opt_state(opt_state, ps, data)
     return opt_state
 end
 
+# TODO: remove when implementing natural gradients
+update_opt_state!(opt_state, ps, data) = nothing
+
 update_state(::VariationalELBO, st, num_samples = 1) = update_state_epsilon(st, num_samples)
 
 """

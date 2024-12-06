@@ -130,7 +130,7 @@ end
 function predict(dcm::DeepCompartmentModel, data, ps_, st; individual::Bool = false, kwargs...)
     ps = constrain(dcm, ps_)
     type = individual ? MixedObjective : FixedObjective # Any MixedObjective will do here
-    p, _ = predict_de_parameters(type, dcm, data, ps, st)
+    z, _ = predict_de_parameters(type, dcm, data, ps, st)
 
-    return forward_ode(dcm, data, p; kwargs...)
+    return forward_ode(dcm, data, z; kwargs...)
 end

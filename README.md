@@ -78,17 +78,24 @@ df = DataFrame(CSV.File("my_dataset.csv"))
 
 population = load(df, [:WEIGHT, :AGE])
 
+# Our data set contains two covariates, which we feed into a hidden layer with 16 neurons
 ann = Chain(
-    # Our data set contains two covariates, which we feed into a hidden layer with 16 neurons
     Dense(2, 16, relu), 
     Dense(16, 4, softplus), # Our differential equation has four parameters
 )
 
-model = DCM(two_comp!, 2, ann) # passing the number of compartments (2) is necessary here.
+obj_fn = SSE() # Minimize the sum of squared errors (equivalent to the mean squared error)
+model = DCM(two_comp!, ann)
+ps, st = setup(obj_fn, model)
 
-fit!(model, population, Optimisers.Adam(), 500) # optimize neural network for 500 epochs
+# Select an optimizer and a learning rate.
+opt = Optimisers.Adam(1e-2)
 
-predict(model, population[1]) # predict the concentration for the first individual in the population.
+# Fit the model:
+opt_state, ps, st = fit(obj_fn, model, population, opt, ps, st; epochs = 100);
+
+# Making predictions.
+predict(model, population[1], ps, st)
 ```
 
 ### Citing this work
