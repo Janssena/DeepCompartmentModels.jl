@@ -69,7 +69,7 @@ DeepCompartmentModel(ode_fn::Function, model, ::Type{T} = Float32; kwargs...) wh
 # Hack, does not work if setindex! is called on other variables or if never called (as is the case in non in-place functions)
 function _estimate_num_partials(ode_fn::Function)
     nargs = first(methods(ode_fn)).nargs - 1
-    if nargs < 4
+    if nargs < 4 # I.e. if not inplace
         throw(ErrorException("Cannot automatically identify the number of partials in the ODE function. Explicitly provide them using `DCM(ode_fn, num_partials, model)`."))
     end
     lowered_lines = split(string(@code_lowered ode_fn(1:nargs...)), "\n")
@@ -116,13 +116,13 @@ Base.show(io::IO, dcm::DeepCompartmentModel{T,D,M,E,S}) where {T,D,M,E,S} = prin
 ##########                        Model API                           ##########
 ################################################################################
 
-function predict_typ_parameters(dcm::DeepCompartmentModel, container::Union{AbstractIndividual, Population{T,I}}, ps, st) where {T,I}
-    ζ, st_θ = dcm.model(get_x(container), ps.theta, st.theta)
+function predict_typ_parameters(dcm::DeepCompartmentModel, data::Union{AbstractIndividual, Population{<:AbstractIndividual}}, ps, st)
+    ζ, st_θ = dcm.model(get_x(data), ps.theta, st.theta)
     return ζ, merge(st, (theta = st_θ, ))
 end
 
 # TODO: TimeVariable version probably gives a vector of ζ and st like this
-function predict_typ_parameters(dcm::DeepCompartmentModel, population::Population{T,I}, ps, st) where {T<:TimeVariable,I}
+function predict_typ_parameters(dcm::DeepCompartmentModel, population::Population{<:TimeVariableIndividual}, ps, st)
     ζ, st_θ = dcm.model.(get_x(population), (ps.theta,), (st.theta,))
     return ζ, merge(st, (theta = st_θ[end], ))
 end

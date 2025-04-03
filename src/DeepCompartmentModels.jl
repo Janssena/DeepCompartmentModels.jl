@@ -12,22 +12,22 @@ using Reexport
 @reexport using ComponentArrays
 
 import Zygote.ChainRules: @ignore_derivatives, ignore_derivatives
-import Lux.Functors
 import SciMLBase
 import FiniteDiff
 import Zygote
 import Random
 import Optim
 
+using Functors
 using LinearAlgebra
 using PartialFunctions
 
 include("lib/compartment_models.jl");
 export  unpack, one_comp!, one_comp_abs!, two_comp!, two_comp_abs!
 
-include("lib/population.jl");
-export  AbstractIndividual, BasicIndividual, Individual, Population, get_x, 
-        get_y, load
+include("lib/individuals.jl"); include("lib/population.jl");
+export  AbstractIndividual, BasicIndividual, TimeVariableIndividual, Individual, 
+        Population, get_x, get_t, get_tx, get_y, load
 
 include("lib/model.jl");
 export  predict, forward_ode, forward_ode_with_dv, construct_p, AbstractModel,

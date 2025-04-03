@@ -38,29 +38,29 @@ constrain_error(::CustomError, ps) =
 
 ########## Omega
 
-constrain_omega(omega::NamedTuple{(:σ,),<:Any}) = (σ = softplus(only(omega.σ)), ) # If omega is σ, it is one-dimensional
-constrain_omega(omega::NamedTuple{(:σ²,),<:Any}) = (σ² = only(omega.σ²), )
-constrain_omega(omega::NamedTuple{(:L,),<:Any}) = (Σ = Symmetric(omega.L * omega.L'), )
-constrain_omega(omega::NamedTuple{(:Σ,),<:Any}) = omega
+constrain_omega(omega::NamedTuple{(:σ,)}) = (σ = softplus(only(omega.σ)), ) # If omega is σ, it is one-dimensional
+constrain_omega(omega::NamedTuple{(:σ²,)}) = (σ² = only(omega.σ²), )
+constrain_omega(omega::NamedTuple{(:L,)}) = (Σ = Symmetric(omega.L * omega.L'), )
+constrain_omega(omega::NamedTuple{(:Σ,)}) = omega
 
 ########## Phi
 
 constrain_phi(phi::@NamedTuple{}) = phi
 
-constrain_phi(phi::NamedTuple{(:μ,:σ),<:Any}) = 
+constrain_phi(phi::NamedTuple{(:μ,:σ)}) = 
     (μ = phi.μ, σ = softplus.(phi.σ), )
 
-constrain_phi(phi::NamedTuple{(:μ,:σ²),<:Any}) = 
+constrain_phi(phi::NamedTuple{(:μ,:σ²)}) = 
     (μ = phi.μ, σ = sqrt.(phi.σ²), )
 
-constrain_phi(phi::NamedTuple{(:μ,:L),<:Any}) = phi
+constrain_phi(phi::NamedTuple{(:μ,:L)}) = phi
 
-constrain_phi(phi::NamedTuple{(:μ,:Σ),<:Any}) = 
+constrain_phi(phi::NamedTuple{(:μ,:Σ)}) = 
     (μ = phi.μ, L = _chol_lower.(cholesky.(phi.Σ)), )
 
 ########## Detect what constrain function to use
 
 """Version that estimates what obj was used"""
-constrain(model::AbstractModel, ps::NamedTuple{(:theta,),<:Any}) = constrain(SSE(), model, ps)
-constrain(model::AbstractModel, ps::NamedTuple{(:theta,:error,),<:Any}) = constrain(LogLikelihood(), model, ps)
-constrain(model::AbstractModel, ps::NamedTuple{(:theta,:error,:omega,:phi,),<:Any}) = constrain(VariationalELBO([1]), model, ps)
+constrain(model::AbstractModel, ps::NamedTuple{(:theta,)}) = constrain(SSE(), model, ps)
+constrain(model::AbstractModel, ps::NamedTuple{(:theta,:error,)}) = constrain(LogLikelihood(), model, ps)
+constrain(model::AbstractModel, ps::NamedTuple{(:theta,:error,:omega,:phi,)}) = constrain(VariationalELBO([1]), model, ps)

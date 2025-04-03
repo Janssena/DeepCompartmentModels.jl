@@ -1,4 +1,4 @@
-function _get_rate_over_t(Iᵢ::AbstractMatrix{T}) where T
+function _get_rate_over_t(Iᵢ::AbstractMatrix{T}) where {T<:Real}
     times, doses, rates, durations = eachcol(Iᵢ)
     # Set any rates of 0 to have taken one minute
     durations[rates .== 0] .= T(1/60)
@@ -34,14 +34,12 @@ Returns a DiscreteCallback implementing the dosing events in intervention matrix
 - `I`: Matrix with rows containing events with time, dose, rate, and duration columns.
 - `S1`: Scaling factor for the doses. Used to get the dose in the same unit as model parameters. Default = 1.
 """
-function generate_dosing_callback(I::AbstractMatrix, T=Float32; S1=1)
+function generate_dosing_callback(I::AbstractMatrix, ::Type{T}=Float32; S1=1) where T
     times_rates = T.(_get_rate_over_t(I) .* [1 S1])
     times = times_rates[:, 1]
     rates = times_rates[:, 2]
     
-    function condition(u, t, p; times=times) 
-        return t ∈ times
-    end
+    condition(u, t, p; times=times) = t ∈ times
 
     function affect!(integrator; rates=rates, times=times)
         # Here we assume that only a single event happens at each t, which is reasonable.
