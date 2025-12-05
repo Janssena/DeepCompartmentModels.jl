@@ -11,7 +11,7 @@ using Reexport
 @reexport using SciMLSensitivity
 @reexport using ComponentArrays
 
-import Zygote.ChainRules: @ignore_derivatives, ignore_derivatives
+import Zygote.ChainRules: @non_differentiable, @ignore_derivatives, ignore_derivatives
 import SciMLBase
 import FiniteDiff
 import Zygote

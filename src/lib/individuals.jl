@@ -17,7 +17,10 @@ Base.copy(individual::AbstractIndividual{T,I,C}, cb::Union{DiscreteCallback, Cal
 
 get_x(indv::AbstractIndividual, key::Symbol=:zeta) = indv.x[key]
 get_t(indv::AbstractIndividual) = indv.t
-get_y(indv::AbstractIndividual) = @ignore_derivatives indv.y
+get_y(indv::AbstractIndividual) = indv.y
+
+@non_differentiable get_x(::AbstractIndividual, ::Symbol)
+@non_differentiable get_y(::AbstractIndividual)
 
 
 ################################################################################
@@ -49,7 +52,8 @@ function BasicIndividual(id::I, x::NamedTuple{(:zeta,:error)}, t::AbstractVector
     _callback_type_matches(cb, T) # warn if callback does not match type.
     return BasicIndividual{T,I,C}(
         id, 
-        fmap(Base.Fix1(convert, Vector{T}), (x, t, y, initial))...,
+        fmap(Base.Fix1(convert, Vector{T}), x),
+        map(Base.Fix1(convert, Vector{T}), (t, y, initial))...,
         cb
     )
 end

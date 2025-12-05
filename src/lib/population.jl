@@ -34,7 +34,9 @@ function Population(data::AbstractVector{T}) where {T<:AbstractIndividual}
             throw(ErrorException("Parametric types of Individuals do not match. Make sure that the ids, Number type, and callbacks are all of the same type."))
         end
     end
-    return Population{eltype(data)}(data, length(data))
+
+    new_type = only(unique(typeof.(data)))
+    return Population{new_type}(Vector{new_type}(data), length(data))
 end
 
 # Population(data::AbstractVector{T}) where T<:Union{BasicIndividual, TimeVariableIndividual} = 
@@ -54,14 +56,16 @@ Base.showarg(io::IO, ::Population{T}, toplevel) where T = print(io, "Population{
 function get_x(pop::Population{T}, key::Symbol=:zeta) where T<:BasicIndividual
     x = zeros(first(T.parameters), length(get_x(pop[1], key)), pop.count)
     for i in eachindex(pop)
-        @ignore_derivatives x[:, i] .= get_x(pop[i], key)
+        x[:, i] .= get_x(pop[i], key)
     end
     return x
 end
 
 get_x(pop::Population{T}, key::Symbol=:zeta) where T<:TimeVariableIndividual = [get_x(indv, key) for indv in pop]
-
 get_t(pop::Population) = [get_t(indv) for indv in pop]
-get_y(pop::Population) = @ignore_derivatives [get_y(indv) for indv in pop]
+get_y(pop::Population) = [get_y(indv) for indv in pop]
+
+@non_differentiable get_x(::Population, ::Symbol)
+@non_differentiable get_y(::Population)
 
 load() = nothing # Is implemented by extensions
