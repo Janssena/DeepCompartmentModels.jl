@@ -1,11 +1,10 @@
-import Core.Compiler: return_type
 import Zygote
 
 # setup
 z = [0.15, 3., 0.10, 1.0, 0.]
 problem = ODEProblem(two_comp!, zeros(2), (-0.1, 48.))
-callback = generate_dosing_callback([0. 1000. 60_000. 1/60]; S1=1/10)
-individual = Individual(Float64[], [4., 24., 45.], [0.5, 0.2, 0.03], callback; id = "test")
+callback = generate_dosing_callback([0. 1000. 60_000. 1/60], Float64; S1=1/10)
+individual = Individual("test", Float64[], [4., 24., 45.], [0.5, 0.2, 0.03], callback, Float64)
 
 @testset "forward_ode" begin
     arg_types = Tuple{typeof(problem), typeof(individual), typeof(z)}

@@ -1,8 +1,8 @@
-function _get_rate_over_t(Iᵢ::AbstractMatrix{T}) where T
-    times, doses, rates, durations = eachcol(Iᵢ)
+function _get_rate_over_t(a::AbstractMatrix{T}; bolus_duration = 1/60) where {T<:Real}
+    times, doses, rates, durations = eachcol(a)
     # Set any rates of 0 to have taken one minute
-    durations[rates .== 0] .= T(1/60)
-    rates[rates .== 0] = doses[rates .== 0] .* T(60)
+    durations[rates .== 0] .= T(bolus_duration)
+    rates[rates .== 0] = doses[rates .== 0] .* T(1/bolus_duration)
     timepoints = unique(vcat(times, times + durations))
     sort!(timepoints)
     k = length(timepoints)
@@ -25,33 +25,46 @@ function _get_rate_over_t(Iᵢ::AbstractMatrix{T}) where T
     return hcat(timepoints, rate_over_t)
 end
 
-"""
-    generate_dosing_callback(I; S1)
+_remove_missing_type(x::AbstractArray{T}) where {T} = 
+    convert(AbstractArray{nonmissingtype(T)}, x)
 
-Returns a DiscreteCallback implementing the dosing events in intervention matrix `I`.
+"""
+    generate_dosing_callback(a; S1)
+
+Returns a DiscreteCallback implementing the dosing events in a matrix of interventions `a`.
 
 # Arguments
-- `I`: Matrix with rows containing events with time, dose, rate, and duration columns.
+- `a`: Matrix with rows containing events with time, dose, (rate, and duration) columns.
 - `S1`: Scaling factor for the doses. Used to get the dose in the same unit as model parameters. Default = 1.
+- `bolus_duration`: Sets the virtual infusion duration for bolus doses. Default = 1/60 (i.e. one minute when t is in hours).
 """
-function generate_dosing_callback(I::AbstractMatrix, T=Float32; S1=1)
-    times_rates = T.(_get_rate_over_t(I) .* [1 S1])
+function generate_dosing_callback(A::AbstractMatrix, ::Type{T}=Float32; S1=1, kwargs...) where T
+    if size(A, 2) == 2 # only times and amts -> assume bolus doses
+        A = hcat(A, zero(A))
+    end
+    
+    times_rates = T.(_get_rate_over_t(_remove_missing_type(A); kwargs...) .* [1 S1])
     times = times_rates[:, 1]
     rates = times_rates[:, 2]
     
-    function condition(u, t, p; times=times) 
-        return t ∈ times
-    end
+    condition(u, t, p; times=times) = t ∈ times
 
     function affect!(integrator; rates=rates, times=times)
         # Here we assume that only a single event happens at each t, which is reasonable.
-        if !(integrator.t ∈ times) return nothing end
-    
-        rate = rates[findfirst(isequal(integrator.t), times)]
-        @ignore_derivatives integrator.p[end, :] .= rate # TODO: set the type of rate?
+        rate_idx = findfirst(isequal(integrator.t), times)
+        if !isnothing(rate_idx)
+            rate = rates[rate_idx]
+            _apply_intervention!(integrator.p, rate)
+        end
         
         nothing
     end
     
     return DiscreteCallback(condition, affect!; save_positions=(false, false))
 end
+
+_apply_intervention!(p::AbstractVector, rate) = p[end] .= rate
+_apply_intervention!(p::AbstractMatrix, rate) = p[end, :] .= rate
+_apply_intervention!(p::ComponentArray, rate) = p.I .= rate # TODO: this should become `A` in time.
+
+@non_differentiable _apply_intervention!(::Any, ::Any)
