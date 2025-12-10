@@ -40,20 +40,20 @@ struct BasicIndividual{T,I<:Union{Integer, AbstractString},C} <: AbstractIndivid
     x::@NamedTuple{zeta::Vector{T}, error::Vector{T}}
     t::Vector{T}
     y::Vector{T}
-    initial::Vector{T}
+    u0::Vector{T}
     callback::C
 end
 
 BasicIndividual(id, x::AbstractVector, t, y, cb, ::Type{T}=Float32; kwargs...) where {T} = 
     BasicIndividual(id, (zeta = x, error = empty(x)), t, y, cb, T; kwargs...)
 
-function BasicIndividual(id::I, x::NamedTuple{(:zeta,:error)}, t::AbstractVector, y::AbstractVector, cb::C, ::Type{T}=Float32; initial::AbstractVector=empty(y)) where {T,I,C}
+function BasicIndividual(id::I, x::NamedTuple{(:zeta,:error)}, t::AbstractVector, y::AbstractVector, cb::C, ::Type{T}=Float32; u0::AbstractVector=empty(y)) where {T,I,C}
     length(t) !== length(y) && throw(ErrorException("Length of time points vector does not match length of observations."))
     _callback_type_matches(cb, T) # warn if callback does not match type.
     return BasicIndividual{T,I,C}(
         id, 
         fmap(Base.Fix1(convert, Vector{T}), x),
-        map(Base.Fix1(convert, Vector{T}), (t, y, initial))...,
+        map(Base.Fix1(convert, Vector{T}), (t, y, u0))...,
         cb
     )
 end
@@ -71,7 +71,7 @@ struct TimeVariableIndividual{T,I<:Union{Integer, AbstractString},C} <: Abstract
     x::@NamedTuple{zeta::Matrix{T}, error::Matrix{T}}
     t::@NamedTuple{zeta::Matrix{T}, error::Matrix{T}, y::Vector{T}}
     y::Vector{T}
-    initial::Vector{T}
+    u0::Vector{T}
     callback::C
 end
 
@@ -99,7 +99,7 @@ function TimeVariableIndividual(
     id::I, x::NamedTuple{(:zeta,:error)}, 
     t::NamedTuple{(:zeta,:error,:y), <:Tuple{<:AbstractMatrix,<:AbstractMatrix,<:AbstractVector}}, 
     y::AbstractVector, cb::C, ::Type{T}=Float32; 
-    initial::AbstractVector=empty(y)) where {T,I,C}
+    u0::AbstractVector=empty(y)) where {T,I,C}
 
     length(t.zeta) !== size(x.zeta, 2) && throw(ErrorException("Length of time points vector does not match length of covariates used in the PK model."))
     size(x.error, 2) !== size(t.error, 2) && throw(ErrorException("Length of time points vector does not match length of covariates used in the error model."))
@@ -109,7 +109,7 @@ function TimeVariableIndividual(
         id, 
         map(Base.Fix1(convert, Matrix{T}), x),
         map(Base.Fix1(broadcast, T), t),
-        map(Base.Fix1(convert, Vector{T}), (y, initial))..., 
+        map(Base.Fix1(convert, Vector{T}), (y, u0))..., 
         cb
     )
 end
@@ -119,7 +119,7 @@ _to_timevariable(indv::BasicIndividual) = TimeVariableIndividual(
         map(Base.Fix2(reshape, (Colon(), 1)), indv.x),
         (zeta = zeros(eltype(indv.t), 1, 1), error = zeros(eltype(indv.t), isempty(indv.x.error) ? 0 : 1, 1), y = indv.t),
         indv.y,
-        indv.initial,
+        indv.u0,
         indv.callback
     )
 
@@ -150,7 +150,7 @@ arguments.
 
 ## Keyword Arguments
   
-  - `initial`: Initial values to use for the differential equation.
+  - `u0`: initial values to use for the differential equation.
 
 ### Examples
 
