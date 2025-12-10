@@ -63,7 +63,7 @@ function generate_dosing_callback(A::AbstractMatrix, ::Type{T}=Float32; S1=1, kw
     return DiscreteCallback(condition, affect!; save_positions=(false, false))
 end
 
-_apply_intervention!(p::AbstractVector, rate) = p[end] .= rate
+_apply_intervention!(p::AbstractVector, rate) = p[end] = rate
 _apply_intervention!(p::AbstractMatrix, rate) = p[end, :] .= rate
 _apply_intervention!(p::ComponentArray, rate) = p.I .= rate # TODO: this should become `A` in time.
 
