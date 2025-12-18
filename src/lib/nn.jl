@@ -4,15 +4,12 @@
 Standard neural network architecture that directly predicts the observations `y`
 based on covariates `x`, time point `t`, and dose `d`.
 """
-struct StandardNeuralNetwork{T,M<:Lux.AbstractLuxLayer,E<:AbstractErrorModel} <: AbstractModel{T,M,E}
+struct StandardNeuralNetwork{M<:Lux.AbstractLuxLayer,E<:AbstractErrorModel} <: AbstractModel{M,E}
     model::M
     error::E
-    StandardNeuralNetwork(model::M, error::E, ::Type{T}=Float32) where {T,M,E} = 
-    new{T,M,E}(model, error)
+    StandardNeuralNetwork(model::M, error::E = ImplicitError()) where {M,E} = 
+        new{M,E}(model, error)
 end
-
-StandardNeuralNetwork(model, ::Type{T}=Float32) where T = 
-    StandardNeuralNetwork(model, ImplicitError(), T)
 
 """
     SNN(...)
@@ -21,7 +18,7 @@ Alias for StandardNeuralNetwork.
 """
 SNN(args...; kwargs...) = StandardNeuralNetwork(args...; kwargs...)
 
-Base.show(io::IO, ::StandardNeuralNetwork{T,M,E}) where {T,M,E} = print(io, "StandardNeuralNetwork{$T}")
+Base.show(io::IO, ::StandardNeuralNetwork{M,E}) where {M,E} = print(io, "StandardNeuralNetwork(...)")
 
 ################################################################################
 ##########                        Model API                           ##########

@@ -6,7 +6,7 @@ Supertype for various Individual types.
 abstract type AbstractIndividual{T,I,C} end
 
 Base.show(io::IO, indv::AbstractIndividual{T}) where T = 
-    print(io, "$(typeof(indv).name.name){$T}(id = $(indv.id), ...)")
+    print(io, "$(nameof(typeof(indv))){$T}(id = $(indv.id), ...)")
 
 Base.copy(individual::AbstractIndividual) = copy(individual, individual.callback)
 

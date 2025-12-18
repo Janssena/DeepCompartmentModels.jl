@@ -51,7 +51,7 @@ Base.size(pop::Population) = (pop.count, )
 Base.similar(::Population, ::Type{T}, dims::Dims) where {T} = Population(T, dims)
 Base.getindex(pop::Population, idx::Int) = getindex(pop.data, idx) # No default
 Base.setindex!(pop::Population{T}, v::T, idx::Int) where {T} = (pop.data[idx] = v)
-Base.showarg(io::IO, ::Population{T}, toplevel) where T = print(io, "Population{$(T.name.name){$(T.parameters[1])}}")
+Base.showarg(io::IO, ::Population{T}, toplevel) where T = print(io, "Population{$(nameof(T)){$(T.parameters[1])}}")
 
 function get_x(pop::Population{T}, key::Symbol=:zeta) where T<:BasicIndividual
     x = zeros(first(T.parameters), length(get_x(pop[1], key)), pop.count)

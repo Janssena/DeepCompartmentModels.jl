@@ -16,7 +16,7 @@ make_dist(error::AbstractErrorModel, ŷ::AbstractVector{<:AbstractVector{<:Real
 end
 
 Base.show(io::IO, error::AbstractErrorModel) = 
-    print(io, "$(typeof(error).name.name)(...)")
+    print(io, "$(nameof(typeof(error)))(...)")
 
 """
     ImplicitError
@@ -42,7 +42,7 @@ y = f(x) + ϵ
 """
 struct AdditiveError <: AbstractErrorModel 
     init
-    function AdditiveError(init::AbstractVector=[]) 
+    function AdditiveError(init::AbstractVector=Float32[]) 
         if length(init) > 1
             throw(ErrorException("Length of `init` for AdditiveError cannot be greater than 1."))
         end
@@ -67,7 +67,7 @@ y = f(x) + f(x) ⋅ ϵ
 """
 struct ProportionalError <: AbstractErrorModel
     init
-    function ProportionalError(init::AbstractVector=[]) 
+    function ProportionalError(init::AbstractVector=Float32[]) 
         if length(init) > 1
             throw(ErrorException("Length of `init` for ProportionalError cannot be greater than 1."))
         end
@@ -81,15 +81,12 @@ var(::ProportionalError, ŷ::AbstractVector{<:Real}, ps, ::NamedTuple; eps=1e-6
     Diagonal((ŷ .* softplus(only(ps.σ))).^2 .+ eltype(ps.σ)(eps)) # small eps to prevent 0 variances when ŷ = 0
 
 Base.show(io::IO, error::Union{<:AdditiveError, <:ProportionalError}) = 
-    print(io, "$(typeof(error).name.name)(init = $(error.init))")
+    print(io, "$(nameof(typeof(error)))(init = $(error.init))")
 
 """
-    CombinedError(init; dependent = false)
+    CombinedError
 
-CombinedError error model for Gaussian likelihoods. There are two types based on whether
-ϵ₁ and ϵ₂ are dependent.
-
-    y = f(x) + ϵ₁ + f(x) ⋅ ϵ₂
+CombinedError error model following y = f(x) + ϵ₁ + f(x) ⋅ ϵ₂
 
 # Arguments
 - `init=[]`: Initial value of error standard deviations. Should have length 0 (no initial values) or 2.
@@ -99,7 +96,7 @@ CombinedError error model for Gaussian likelihoods. There are two types based on
 """
 struct CombinedError{T<:StaticBool} <: AbstractErrorModel
     init
-    function CombinedError(init::AbstractVector=[]; dependent::Bool = false) 
+    function CombinedError(init::AbstractVector=Float32[]; dependent::Bool = false) 
         if length(init) == 1 || length(init) > 2
             throw(ErrorException("Length of `init` for CombinedError cannot be equal to 1 or greater than 2."))
         end
@@ -129,7 +126,7 @@ that returns the variance Σ of the observations (in Matrix form).
 struct CustomError{M} <: AbstractErrorModel 
     model::M
     init
-    CustomError(init=[]; model = nothing) = new{typeof(model)}(model, init)
+    CustomError(init=Float32[]; model = nothing) = new{typeof(model)}(model, init)
 end
 
 # TODO: add the option to covariates in here, should be through the passing of individual and taking individual.x.error

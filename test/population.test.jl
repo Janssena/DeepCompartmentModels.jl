@@ -12,13 +12,13 @@ m = 3 # ode dim
         
         @test typeof(indv_basic).parameters[1] == T
         @test indv_basic.x isa @NamedTuple{zeta::Vector{T},error::Vector{T}}
-        @test eltype(indv_basic.t) == eltype(indv_basic.y) == eltype(indv_basic.initial) == T
+        @test eltype(indv_basic.t) == eltype(indv_basic.y) == eltype(indv_basic.u0) == T
         
         @test size(indv_basic.x.zeta) == (p₁, )
         @test size(indv_basic.x.error) == (p₂, )
         @test size(indv_basic.t) == (d, )
         @test size(indv_basic.y) == (d, )
-        @test size(indv_basic.initial) == (m, )
+        @test size(indv_basic.u0) == (m, )
     end
     # test Individual constructor
     x = rand(p₁)
@@ -57,7 +57,7 @@ m = 3 # ode dim
     @test size(indv_time_var.t.error) == (1, 1)
     @test size(indv_time_var.t.y) == (d, )
     @test size(indv_time_var.y) == (d, )
-    @test size(indv_time_var.initial) == (m, )
+    @test size(indv_time_var.u0) == (m, )
     
     # Copying individual, without changing callback
     indv_basic_copy = copy(indv_basic)
@@ -87,14 +87,14 @@ end
             @test typeof(indv).parameters[1] == T
             @test indv.x isa @NamedTuple{zeta::Matrix{T},error::Matrix{T}}
             @test indv.t isa @NamedTuple{zeta::Matrix{T},error::Matrix{T},y::Vector{T}}
-            @test eltype(indv.t.zeta) == eltype(indv.t.error) == eltype(indv.t.y) == eltype(indv.y) == eltype(indv.initial) == T
+            @test eltype(indv.t.zeta) == eltype(indv.t.error) == eltype(indv.t.y) == eltype(indv.y) == eltype(indv.u0) == T
             @test size(indv.x.zeta) == (p₁, k)
             @test size(indv.x.error) == (p₂, k)
             @test size(indv.t.zeta) == (1, k)
             @test size(indv.t.error) == (1, k)
             @test size(indv.t.y) == (d, )
             @test size(indv.y) == (d, )
-            @test size(indv.initial) == (m, )
+            @test size(indv.u0) == (m, )
         end
     end
     # test Individual constructor without error covariates

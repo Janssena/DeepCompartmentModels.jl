@@ -30,6 +30,7 @@ using Static
 using Functors
 using ThreadPools
 using LinearAlgebra
+using InvertedIndices
 using ComponentArrays
 using LogExpFunctions
 
@@ -51,23 +52,14 @@ export  DeepCompartmentModel, DCM, predict_typ_parameters, predict_de_parameters
 include("lib/nn.jl");
 export  StandardNeuralNetwork, SNN, predict
 
+include("lib/ude.jl");
+export  UniversalDiffEq, AbstractUDEType, BasicUDE, TimeConcatUDE, build_problem
+
 include("lib/solve.jl");
 export  solve, solve_for_target, construct_p
 
 include("lib/random_effects.jl");
 export  get_random_effects, make_etas, sample_gaussian, update_state!
-
-# include("lib/node.jl");
-# export NeuralODE
-
-# include("lib/low_dim_node.jl");
-# export  LowDimensionalNeuralODE, LowDimNODE
-
-# include("lib/auto_encoding_node.jl");
-# export  AutoEncodingNeuralODE, VAENODE
-
-# include("lib/optimization.jl")
-# export  fit, update_state
 
 include("lib/objectives.jl");
 export  MSE, SSE, Loglikelihood, VariationalELBO, mse, sse, 

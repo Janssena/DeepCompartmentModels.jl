@@ -65,16 +65,22 @@ L = 1/n * ∑ᵢ (yᵢ - ŷᵢ)²
 - `ps`: Model parameters. Contains all learnable parameters.
 - `st`: Model state. Contains additional parameters which are deemed constant when calculating gradients.
 """
-function mse(model::AbstractDEModel, data::D, ps, st; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
+function mse(model::AbstractDEModel{<:SciMLBase.AbstractDEProblem}, data::D, ps, st; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
     z, _ = predict_de_parameters(model, data, ps, st)
     return mse(model, data, z; kwargs...)
 end
 
+function mse(model::AbstractDEModel{<:UniversalDiffEq}, data::D, ps, st; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
+    ŷ = solve_for_target(model, data, ps, st; kwargs...)
+    return _mse(get_y(data), ŷ)
+end
+
 function mse(model::AbstractDEModel, data::D, z::AbstractArray; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
     ŷ = solve_for_target(model, data, z; kwargs...)
-    _mse = map(mean ∘ Base.Fix1(broadcast, abs2), get_y(data) - ŷ)
-    return mean(_mse)
+    return _mse(get_y(data), ŷ)
 end
+
+_mse(y, ŷ) = mean(map(mean ∘ Base.Fix1(broadcast, abs2), y - ŷ))
 
 """
     sse(dcm, data, ps, st)
@@ -94,11 +100,17 @@ function sse(model::AbstractDEModel, data::D, ps, st; kwargs...) where D<:Union{
     return sse(model, data, z; kwargs...)
 end
 
+function sse(model::AbstractDEModel{<:UniversalDiffEq}, data::D, ps, st; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
+    ŷ = solve_for_target(model, data, ps, st; kwargs...)
+    return _sse(get_y(data), ŷ)
+end
+
 function sse(model::AbstractDEModel, data::D, z::AbstractArray; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
     ŷ = solve_for_target(model, data, z; kwargs...)
-    _sse = map(sum ∘ Base.Fix1(broadcast, abs2), get_y(data) - ŷ)
-    return sum(_sse)
+    return _sse(get_y(data), ŷ)
 end
+
+_sse(y, ŷ) = sum(map(sum ∘ Base.Fix1(broadcast, abs2), y - ŷ))
 
 """
     loglikelihood(dcm, data, ps, st)
@@ -114,9 +126,15 @@ L = ∑ᵢ logpdf(yᵢ | M)
 - `ps`: Model parameters. Contains all learnable parameters.
 - `st`: Model state. Contains additional parameters which are deemed constant when calculating gradients.
 """
-function Distributions.loglikelihood(model::AbstractDEModel, data::D, ps::NamedTuple, st::NamedTuple; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
+function Distributions.loglikelihood(model::AbstractDEModel{<:SciMLBase.AbstractDEProblem}, data::D, ps::NamedTuple, st::NamedTuple; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
     z, _ = predict_de_parameters(model, data, ps, st)
     return loglikelihood(model, data, z, ps; kwargs...)
+end
+
+function Distributions.loglikelihood(model::AbstractDEModel{<:UniversalDiffEq}, data::D, ps::NamedTuple, st::NamedTuple; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
+    ŷ = solve_for_target(model, data, ps, st; kwargs...)
+    dist = make_dist(model.error, ŷ, ps.error)
+    return _logpdf(dist, get_y(data))
 end
 
 function Distributions.loglikelihood(model::AbstractDEModel, data::D, z::AbstractArray, ps::NamedTuple; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}

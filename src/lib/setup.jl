@@ -13,7 +13,13 @@ setup(::AbstractErrorModel, init::AbstractVector) = (σ = invsoftplus.(init), )
 
 ##### Full setup
 
-setup(rng, model::Lux.AbstractLuxLayer) = Lux.setup(rng, model)
+setup(rng, dcm::DeepCompartmentModel{<:SciMLBase.AbstractDEProblem}) = 
+    Lux.setup(rng, dcm.model)
+
+function setup(rng, dcm::DeepCompartmentModel{<:UniversalDiffEq})
+    ps, st = Lux.setup(rng, dcm.model)
+    return ComponentVector(merge(ps, (I = 0, ))), st
+end
 
 """
     setup(obj::FixedObjective, rng, model, ::Type{T}=Float32; init_sigma, params)
@@ -31,7 +37,7 @@ Setup function that initialises model parameters and state.
 - `params`: Parameterisation to use. Should be one of [MeanSqrt(), MeanVar()]. Default = MeanSqrt().
 """
 function setup(::FixedObjective, rng::Random.AbstractRNG, model::AbstractModel, ::Type{T}=Float32; init_sigma = nothing, params::Parameterisation=MeanSqrt()) where T
-    ps_theta, st_theta = setup(rng, model.model)
+    ps_theta, st_theta = setup(rng, model)
     ps = (
         theta = ps_theta, 
         error = setup(model.error, init_sigma)
@@ -63,7 +69,7 @@ function setup(
     obj::MixedObjective, rng::Random.AbstractRNG, model::AbstractModel, population::Population, ::Type{T}=Float32; 
     init_omega=0.1, init_sigma = nothing, params::Parameterisation=MeanSqrt(), kwargs...) where T
 
-    ps_theta, st_theta = setup(rng, model.model)
+    ps_theta, st_theta = setup(rng, model)
     Ω = Symmetric(collect(Diagonal(ones(_num_random_effects(obj)) .* init_omega)))
     num_params = _estimate_typ_parameter_size(model, population[1:1], (theta = ps_theta, ), (theta = st_theta, ))
     ps_phi, st_phi = setup_phi(obj, rng, model, population, Ω; num_params, kwargs...)

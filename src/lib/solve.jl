@@ -75,11 +75,22 @@ construct_p(z::AbstractVector{T}, ::AbstractIndividual) where T =
     construct_p(z::AbstractMatrix, ::TimeVariableIndividual)
 
 DE parameters for TimeVariableIndividuals are Matrices and thus a specific function is
-required to add zeros to the bottom row of the matrix to support setting the treament
+required to add zeros to the bottom row of the matrix to correctly set the treament
 intervention.
 """
 construct_p(z::AbstractMatrix{T}, ::TimeVariableIndividual) where T = 
     vcat(z, zeros(T, 1, size(z, 2)))
+
+"""
+    construct_p(z::ComponentArray, ::AbstractIndividual)
+
+If the DE parameters are ComponentArrays, they already contain an Intervention key that is
+initialised to zero. This is the case for UniversalDiffEq, since these take ComponentArrays as parameters.
+"""
+function construct_p(z::ComponentArray{T}, ::AbstractIndividual) where T
+    @ignore_derivatives z.I = zero(T)
+    return z
+end
 
 """
     solve_for_target(model::AbstractDEModel, individual::AbstractIndividual, z::AbstractArray{<:Real})
@@ -87,10 +98,13 @@ construct_p(z::AbstractMatrix{T}, ::TimeVariableIndividual) where T =
 Specific version of the solve call that passes the sensealg to the solve call, only grabs the target 
 indices from prediction inside the `sol` object.
 """
-solve_for_target(model::DeepCompartmentModel{P,M,E,T}, individual::AbstractIndividual, z::AbstractArray{<:Real}; sensealg = model.sensealg, kwargs...) where {P,M,E,T<:Int} = 
-    Array(SciMLBase.solve(model.problem, individual, z; sensealg, kwargs...))[model.target, :] # old
+function solve_for_target(model::DeepCompartmentModel{P,M,E,T}, individual::AbstractIndividual, z::AbstractArray{<:Real}; sensealg = model.sensealg, kwargs...) where {P,M,E,T<:Int}
+    sol = solve(model.problem, individual, z; sensealg, kwargs...)
+    return _take_target(sol, model.target) # old
+end
 
 # TODO: version that works with multiple dvs
+_take_target(sol::DESolution, target::Int) = Array(sol)[target, :]
 
 solve_for_target(dcm::DeepCompartmentModel{P,M,E,T}, population::Population{<:AbstractIndividual}, z::AbstractMatrix; kwargs...) where {P,M,E,T} = 
     solve_for_target.((dcm, ), population, eachcol(z); kwargs...)
