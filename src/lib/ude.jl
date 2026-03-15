@@ -14,9 +14,11 @@ struct UniversalDiffEq{P<:SciMLBase.AbstractDEProblem,T<:AbstractUDEType} <: Sci
 end
 
 function UniversalDiffEq(num_partials::Int, ::Type{T1}=Float32; type::T = BasicUDE()) where {T1,T} 
-    problem = ODEProblem{false}(() -> nothing, zeros(T1, num_partials), (-T1(0.1), T1(1)))
+    problem = ODEProblem{false}(_empty_de, zeros(T1, num_partials), (-T1(0.1), one(T1)))
     return UniversalDiffEq(problem, type)
 end
+
+_empty_de(u, p, t) = nothing
 
 function build_problem(ude::UniversalDiffEq{P}, model::Lux.AbstractLuxLayer, st::NamedTuple) where P<:SciMLBase.AbstractODEProblem
     stateful = Lux.StatefulLuxLayer{true}(model, nothing, st.theta)
@@ -24,8 +26,8 @@ function build_problem(ude::UniversalDiffEq{P}, model::Lux.AbstractLuxLayer, st:
     return remake(ude.problem, f = dudt)
 end
 
-(::UniversalDiffEq{P,T})(model, u, p, t) where {P,T<:BasicUDE} = p.I .+ model(u, p)
-(::UniversalDiffEq{P,T})(model, u, p, t) where {P,T<:TimeConcatUDE} = p.I .+ model(_concat(u, t), p)
+(::UniversalDiffEq{P,T})(model, u, p, t) where {P,T<:BasicUDE} = [p.I; zeros(eltype(u), length(u) - 1)] .+ model(u, p)
+(::UniversalDiffEq{P,T})(model, u, p, t) where {P,T<:TimeConcatUDE} = [p.I; zeros(eltype(u), length(u) - 1)] .+ model(_concat(u, t), p)
 
  # TODO: versions for images
 _concat(u::Union{Real, AbstractVector}, t::Real) = [u; t]
@@ -67,7 +69,7 @@ function solve_for_target(
     )
     prob = build_problem(dcm.problem, dcm.model, st)
     sol = solve(prob, individual, ps; sensealg, kwargs...)
-    return _take_target(sol, dcm.target)
+    return _take_target(sol, individual, dcm.target)
 end
 
 SciMLBase.solve(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual, ps::NamedTuple; kwargs...) = 
@@ -99,5 +101,5 @@ function Base.show(io::IO, mime::MIME"text/plain", ude::UniversalDiffEq)
     show(io, mime, ude.problem.u0)
 end
 
-Base.show(io::IO, dcm::DeepCompartmentModel{<:UniversalDiffEq{P,T},M,E,S}) where {P,T,M,E,S} = 
-    print(io, "DeepCompartmentModel{UniversalDiffEq($(nameof(P)), $T), $(dcm.error)}")
+Base.show(io::IO, dcm::DeepCompartmentModel{UniversalDiffEq{P,T},M,E,S}) where {P,T,M,E,S} = 
+    print(io, "DeepCompartmentModel{UniversalDiffEq($(nameof(P)), $(nameof(T))), $(dcm.error)}")
