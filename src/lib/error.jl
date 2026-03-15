@@ -135,3 +135,31 @@ var(::CustomError, ŷ::AbstractVector, ps, st) =
     throw(ErrorException("`var` method not implemented. Overload Statistics.var when using CustomError error."))
 
 Base.show(io::IO, ::CustomError) = print(io, "CustomError(...)")
+
+"""
+    ErrorModelSet
+
+Error model consisting of a set of AbstractErrorModels for multiple objectives. 
+
+# Arguments
+- `errors`: Tuple containing the different ErrorModels.
+"""
+struct ErrorModelSet{E} <: AbstractErrorModel
+    errors::E
+    ErrorModelSet(errors::Vararg{AbstractErrorModel}) = 
+        new{typeof(errors)}(errors)
+end
+
+var(error::ErrorModelSet, ŷs::AbstractVector{<:AbstractVector{<:Real}}, ps, st) = map(eachindex(ŷs)) do j
+    var(error.errors[j], ŷs[j], take_batch(ps, st, j)...)
+end
+
+Base.show(io::IO, error::ErrorModelSet) = 
+    print(io, "ErrorModelSet($(join([nameof(typeof(e)) for e in error.errors], ", ")))")
+    
+make_dist(error::ErrorModelSet, ŷs::AbstractVector{<:AbstractVector{<:AbstractVector{<:Real}}}, ps, st) = map(ŷs) do ŷᵢ
+    make_dist(error, ŷᵢ, ps, st)
+end
+
+make_dist(error::ErrorModelSet, ŷs::AbstractVector{<:AbstractVector{<:Real}}, ps, st; kwargs...) = 
+    MvNormal.(ŷs, var(error, ŷs, ps, st; kwargs...))

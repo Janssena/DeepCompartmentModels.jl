@@ -9,8 +9,8 @@ struct MSE <: FixedObjective end
 struct SSE <: FixedObjective end
 (::SSE)(dcm, data, ps, st) = sse(dcm, data, ps, st)
 
-struct Loglikelihood <: FixedObjective end
-(::Loglikelihood)(dcm, data, ps, st) = -loglikelihood(dcm, data, ps, st)
+struct LogLikelihood <: FixedObjective end
+(::LogLikelihood)(dcm, data, ps, st) = -loglikelihood(dcm, data, ps, st)
 
 abstract type MixedObjective <: AbstractObjective end
 
@@ -147,7 +147,7 @@ Distributions.loglikelihood(model::AbstractDEModel, data::D, ps, sts::AbstractVe
     loglikelihood(model, data, ps, st; kwargs...)
 end
 
-function Distributions.kldivergence(dcm::DeepCompartmentModel, ps, st) 
+function Distributions.kldivergence(dcm::DeepCompartmentModel{D,M}, ps, st) where {D<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer}
     qs = getq(dcm, ps, st)
     ps = getprior(dcm, ps, st)
     return sum(Distributions.kldivergence.(qs, ps))
@@ -202,6 +202,9 @@ elbo(dcm::DeepCompartmentModel, data::D, ps, st::NamedTuple; kwargs...) where D<
 elbo(dcm::DeepCompartmentModel, data::D, ps, sts::AbstractVector{<:NamedTuple}; kwargs...) where D<:Union{<:Population, <:AbstractIndividual} = qmap(sts) do st
     elbo(dcm, data, ps, st; kwargs...)
 end
+
+_logpdf(dists::AbstractVector{<:AbstractVector{<:Distribution}}, x::AbstractVector{<:AbstractVector{<:AbstractVector{<:Real}}}) = 
+    sum(map(_logpdf, dists, x))
 
 _logpdf(dists::AbstractVector{<:Distribution}, x::AbstractVector{<:AbstractVector{<:Real}}) = 
     sum(logpdf.(dists, x))

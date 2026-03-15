@@ -9,6 +9,7 @@ _to_random_eff_matrix(mask, etas::AbstractVector{<:AbstractVector{<:Real}}) =
 _to_random_eff_matrix(mask, etas::AbstractArray{<:Real}) = mask * etas
 
 # for a vectors of distribution parameters (i.e. those present in phi)
+sample_gaussian(ps::NamedTuple{(:z,)}, st) = ps.z
 
 sample_gaussian(ps::NamedTuple{(:μ, :Σ), <:Tuple{<:AbstractVector{<:AbstractVector{<:Real}}, <:AbstractVector{<:Symmetric}}}, st) = 
     sample_gaussian.(ps.μ, getproperty.(cholesky.(ps.Σ), :L), st.epsilon)
@@ -39,10 +40,10 @@ sample_gaussian(ps::NamedTuple{(:μ, :σ²), <:Tuple{<:AbstractVector{<:Real}, <
 sample_gaussian(μ::AbstractVector, L::LowerTriangular, ϵ::AbstractVector) = μ + L * ϵ
 sample_gaussian(μ::AbstractVector, σ::AbstractVector, ϵ::AbstractVector) = μ + σ .* ϵ
 
-function update_state!(rng::Random.AbstractRNG, st::NamedTuple) 
+function update_epsilon!(rng::Random.AbstractRNG, st::NamedTuple) 
     fmap_with_path(st) do kp, x
         if :epsilon in kp
-            x .= randn(rng, size(x))
+            x .= randn(rng, eltype(x), size(x))
         end
     end
     return nothing

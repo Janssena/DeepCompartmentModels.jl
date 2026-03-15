@@ -28,7 +28,9 @@ function Population(data::AbstractVector{T}) where {T<:AbstractIndividual}
                 data = _to_timevariable.(data)
             end
         end
-        
+        # TODO: need to check if resulting types is a Union.
+        # Occassions might also be a problem when a mix.
+
         # Parameter types are different
         if length(unique(map(Base.Fix2(getproperty, :parameters), types))) !== 1
             throw(ErrorException("Parametric types of Individuals do not match. Make sure that the ids, Number type, and callbacks are all of the same type."))

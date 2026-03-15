@@ -92,7 +92,7 @@ Alias for DeepCompartmentModel(args...; kwargs...)
 """
 DCM(args...; kwargs...) = DeepCompartmentModel(args...; kwargs...)
 
-Base.show(io::IO, dcm::DeepCompartmentModel{<:SciMLBase.AbstractDEProblem}) = 
+Base.show(io::IO, dcm::DeepCompartmentModel{SciMLBase.AbstractDEProblem}) = 
     print(io, "DeepCompartmentModel{$(dcm.problem.f.f), $(dcm.error)}")
 
 ################################################################################

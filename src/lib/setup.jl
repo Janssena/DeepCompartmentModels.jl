@@ -9,14 +9,23 @@ function setup(error::AbstractErrorModel, ::Nothing)
     return (σ = invsoftplus.(error.init), )
 end
 
-setup(::AbstractErrorModel, init::AbstractVector) = (σ = invsoftplus.(init), )
+function setup(error::ErrorModelSet, ::Nothing) 
+    if any(isempty.(getproperty.(error.errors, :init)))
+        throw(ErrorException("No explicit initialisation passed for all error parameters. Either recreate the ErrorModels using a suitable `init` argument or pass initialisation through the `init_sigma` keyword of the `setup` function."))
+    end
+
+    return (σ = [invsoftplus.(e.init) for e in error.errors], )
+end
+
+setup(::AbstractErrorModel, init::AbstractVector{<:Real}) = (σ = invsoftplus.(init), )
+setup(::ErrorModelSet, inits::AbstractVector{<:AbstractVector{<:Real}}) = (σ = map(Base.Fix1(broadcast, invsoftplus), inits), )
 
 ##### Full setup
 
 setup(rng, dcm::DeepCompartmentModel{<:SciMLBase.AbstractDEProblem}) = 
     Lux.setup(rng, dcm.model)
 
-function setup(rng, dcm::DeepCompartmentModel{<:UniversalDiffEq})
+function setup(rng, dcm::DeepCompartmentModel{<:UniversalDiffEq{P,T}}) where {P,T}
     ps, st = Lux.setup(rng, dcm.model)
     return ComponentVector(merge(ps, (I = 0, ))), st
 end
@@ -117,15 +126,20 @@ function indicator(n::Int, a::AbstractVector{Int}, ::Type{T}=Float32) where T
 end
 
 _convert_types(::Type{T}, nt::NamedTuple) where T = fmap(Base.Fix1(_convert, T), nt)
+_convert(::Type{T}, x::Nothing) where T = x
 _convert(::Type{T}, x::Real) where T = convert(T, x)
 _convert(::Type{T}, x::AbstractArray{<:Real}) where T = convert(AbstractArray{T}, x) # Works for Symmetric and Diagonal as well.
+
+Functors.isleaf(::Cholesky) = true
 _convert(::Type{T}, x::Cholesky) where T = 
     Cholesky(convert(AbstractArray{T}, x.factors), x.uplo, x.info)
 
 # TODO: change parameter name as well in the kp
 function _convert_parameters(::MeanVar, ps::NamedTuple) 
     ps_new = fmap_with_path(ps) do kp, x
-        if :L in kp
+        if isnothing(x)
+            return x
+        elseif :L in kp
             return Symmetric(x * x')
         elseif :σ in kp && !(:error in kp)
             return softplus.(x).^2
@@ -139,7 +153,9 @@ end
 
 function _convert_parameters(::MeanSqrt, ps::NamedTuple) 
     ps_new = fmap_with_path(ps) do kp, x
-        if :Σ in kp
+        if isnothing(x)
+            return x
+        elseif :Σ in kp
             return cholesky(x).L
         elseif :σ² in kp && !(:error in kp)
             return invsoftplus.(sqrt.(x))
@@ -156,8 +172,13 @@ _update_keys(x, replacements::Pair...; kwargs...) = x
 
 function _update_keys(nt::NamedTuple, replacements::Pair...; exclude = :error)
     old_keys = keys(nt)
+
     new_values = map(old_keys) do key
-        _update_keys(nt[key], replacements...; exclude)
+        if key == exclude 
+            return nt[key]
+        else
+            return _update_keys(nt[key], replacements...; exclude)
+        end
     end
     new_keys = replace(old_keys, replacements...)
     return NamedTuple{new_keys}(new_values)

@@ -38,12 +38,12 @@ include("lib/compartment_models.jl");
 export  unpack, one_comp!, one_comp_abs!, two_comp!, two_comp_abs!
 
 include("lib/individuals.jl"); include("lib/population.jl");
-export  AbstractIndividual, BasicIndividual, TimeVariableIndividual, Individual, 
-        Population, get_x, get_t, get_tx, get_y, load
+export  AbstractIndividual, BasicIndividual, TimeVariableIndividual, MOIndividual, 
+        Individual, Population, get_x, get_t, get_tx, get_y, load
 
 include("lib/error.jl");
 export  AbstractErrorModel, AdditiveError, ProportionalError, CombinedError, 
-        CustomError, make_dist, var
+        CustomError, ErrorModelSet, make_dist, var
 
 include("lib/dcm.jl");
 export  DeepCompartmentModel, DCM, predict_typ_parameters, predict_de_parameters, 
@@ -59,10 +59,10 @@ include("lib/solve.jl");
 export  solve, solve_for_target, construct_p
 
 include("lib/random_effects.jl");
-export  get_random_effects, make_etas, sample_gaussian, update_state!
+export  get_random_effects, make_etas, sample_gaussian, update_epsilon!
 
 include("lib/objectives.jl");
-export  MSE, SSE, Loglikelihood, VariationalELBO, mse, sse, 
+export  MSE, SSE, LogLikelihood, VariationalELBO, mse, sse, 
         loglikelihood, kldivergence, logprior, logq, getq, logjoint, 
         elbo
 
