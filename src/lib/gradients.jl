@@ -7,28 +7,29 @@ function gradient(objective::AbstractObjective, dcm::DeepCompartmentModel, popul
         grads = qmap(eachindex(population)) do i
             _gradient(objective, dcm, population, i:i, ps, st)
         end
-        return fmap(_sum_grads, grads...)
+        return fmap(_sum_grads, grads...; exclude = _isleaf_or_vec_of_arrays)
     elseif parallel == :batch
         batches = create_batches(population, batchsize)
         grads = qmap(batches) do batch
             _gradient(objective, dcm, population, batch, ps, st)
         end
-        return fmap(_sum_grads, grads...)
+        return fmap(_sum_grads, grads...; exclude = _isleaf_or_vec_of_arrays)
     else
         throw(ErrorException("Parallel = $(parallel) not recognized. Please use one of [false, :individual, :batch]"))
     end
 end
 
-function _gradient(objective::FixedObjective, dcm, data, ps, st)
+function _gradient(objective::FixedObjective, dcm::DeepCompartmentModel, data, ps, st)
     grad = Zygote.gradient(ps) do p
         objective(dcm, data, p, st)
     end
     return first(grad)
 end
 
-function _gradient(objective::FixedObjective, dcm, data, idx, ps, st)
-    grad = Zygote.gradient(ps) do p
-        objective(dcm, data[idx], p, st)
+function _gradient(objective::FixedObjective, dcm::DeepCompartmentModel, population::Population, batch, ps, st)
+    ps_batch, st_batch = take_batch(ps, st, batch; exclude = dcm.error isa ErrorModelSet ? (:error) : nothing)
+    grad = Zygote.gradient(ps_batch) do p
+        objective(dcm, population[batch], p, st_batch)
     end
     return first(grad)
 end
@@ -89,15 +90,20 @@ function add_path_deriv_dlogq(∇, ps, st)
 end
 
 function _gradient(obj::VariationalELBO, dcm::DeepCompartmentModel{P,M}, data, batch::AbstractArray{<:Int}, ps, st) where {P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer}
-    ps_batch, st_batch = take_batch(ps, st, batch)
+    ps_batch, st_batch = take_batch(ps, st, batch; exclude = dcm.error isa ErrorModelSet ? (:error) : nothing)
     grad_batch = _gradient(obj, dcm, data[batch], ps_batch, st_batch)
     # TODO: correct phi indices (potentially more to do for other models)
     grad_phi = fmap(ps.phi) do _
         nothing
     end
-    Accessors.@reset grad_phi.μ[batch] = grad_batch.phi.μ
-    variance_key = only(filter(!=(:μ), keys(ps.phi)))
-    Accessors.@reset grad_phi[variance_key][batch] = grad_batch.phi[variance_key]
+    if :z in keys(grad_batch.phi)
+        grad_phi = NamedTuple{(:z,)}((grad_phi.μ, ))
+        Accessors.@reset grad_phi.z[batch] = grad_batch.phi.z
+    else
+        Accessors.@reset grad_phi.μ[batch] = grad_batch.phi.μ
+        variance_key = only(filter(!=(:μ), keys(ps.phi)))
+        Accessors.@reset grad_phi[variance_key][batch] = grad_batch.phi[variance_key]
+    end
     
     return Accessors.@set grad_batch.phi = grad_phi
 end
@@ -111,27 +117,36 @@ end
 create_batches(population::Population, M::Int) = 
     create_batches(length(population), min(M, length(population)))
 
-take_batch(ps::NamedTuple, st::NamedTuple, batch) = take_batch(ps, batch), take_batch(st, batch)
+take_batch(ps::NamedTuple, st::NamedTuple, batch; kwargs...) = take_batch(ps, batch; kwargs...), take_batch(st, batch; kwargs...)
 
-take_batch(x, ::Any) = x
-take_batch(x::AbstractVector{<:AbstractArray{<:Real}}, i) = x[i]
-take_batch(x::AbstractVector{<:Cholesky}, i) = x[i]
-function take_batch(x::NamedTuple, i) 
+take_batch(x, ::Any; kwargs...) = x
+take_batch(x::AbstractVector{<:AbstractArray{<:Real}}, i; kwargs...) = x[i]
+take_batch(x::AbstractVector{<:AbstractVector{<:AbstractArray{<:Real}}}, i; kwargs...) = x[i]
+take_batch(x::AbstractVector{<:Cholesky}, i; kwargs...) = x[i]
+take_batch(x::AbstractVector{<:AbstractVector{<:Cholesky}}, i; kwargs...) = x[i]
+function take_batch(x::NamedTuple, i; exclude::Union{Nothing, Symbol} = :error)
     keys_ = keys(x)
     values_ = map(keys_) do key # Almost a fmap, but does not recurse into indexes
-        take_batch(x[key], i)
+        if !isnothing(exclude) && key == exclude
+            return x[key]
+        else
+            return take_batch(x[key], i; exclude)
+        end
     end
     return NamedTuple{keys_}(values_)
 end
 
 _sum_grads(::Vararg{Nothing}) = nothing
 _sum_grads(xs::Vararg) = +(filter(!isnothing, xs)...)
+_isleaf_or_vec_of_arrays(::KeyPath, x) = _isleaf_or_vec_of_arrays(x)
+_isleaf_or_vec_of_arrays(x) = Functors.isleaf(x)
+_isleaf_or_vec_of_arrays(x::AbstractVector{<:AbstractArray{<:Real}}) = true
 
 function residual_error_value_and_gradient(rng::Random.AbstractRNG, dcm::DeepCompartmentModel{P,M}, data, ps, st; mode::Symbol = :forward, num_samples::Int = 100) where {P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer}
     ∇ = NamedTuple{keys(ps)}(fill(nothing, length(keys(ps))))
     st_local = deepcopy(st)
     predictions = map(1:num_samples) do _
-        update_state!(rng, st_local)
+        update_epsilon!(rng, st_local)
         predict(dcm, data, ps, st_local)
     end
     
