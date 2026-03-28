@@ -24,7 +24,7 @@ function SciMLBase.solve(
         interpolate::Bool = false, 
         saveat::AbstractVector{<:Real} = get_t(individual),
         kwargs...
-    ) where {T,O<:Bool}
+    ) where {T,O<:Nothing}
     prob = _remake_prob(problem, individual, saveat, z)
     interpolate && _set_save_positions!(individual.callback, true)
     sol = SciMLBase.solve(prob, solver;
