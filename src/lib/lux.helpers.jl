@@ -15,26 +15,27 @@ length of `lb` and `ub` should match the input vector.
 - `lb`: lower bound, default = zero(ub).
 - `ub`: upper bound.
 """
-struct Normalize{T} <: Lux.AbstractLuxLayer
-    lb::Vector{T}
-    ub::Vector{T}
-    Normalize(lb::AbstractVector, ub::AbstractVector, ::Type{T}=Float32) where T = new{T}(T.(lb), T.(ub))
-    Normalize(ub::AbstractVector, ::Type{T}=Float32) where T = new{T}(zeros(T, length(ub)), T.(ub))
+struct Normalize{T<:AbstractVector{<:Real}} <: Lux.AbstractLuxLayer
+    lb::T
+    ub::T
 end
 
-Normalize(lb::Real, ub::Real, ::Type{T}=Float32) where T = Normalize([lb], [ub], T)
-Normalize(ub::Real, ::Type{T}=Float32) where T = Normalize([ub], T)
+Normalize(lb::Real, ub::Real) = Normalize([lb], [ub])
+Normalize(ub::Real) = Normalize([ub])
+Normalize(ub::AbstractVector) = Normalize(zero(ub), ub)
 
 Lux.initialparameters(::Random.AbstractRNG, ::Normalize) = NamedTuple()
-Lux.initialstates(::Random.AbstractRNG, l::Normalize) = (lb = l.lb, ub = l.ub)
+Lux.initialstates(::Random.AbstractRNG, l::Normalize) = (lb = Float32.(l.lb), ub = Float32.(l.ub))
 
 Lux.parameterlength(::Normalize) = 0
 Lux.statelength(l::Normalize) = 2 * length(l.ub)
 
 function (l::Normalize)(x::AbstractArray, ps, st::NamedTuple)
-    y = (x .- st.lb) ./ (st.ub - st.lb)
+    y = @. (x - st.lb) / (st.ub - st.lb)
     return y, st
 end
+
+Base.show(io::IO, l::Normalize) = print(io, "Normalize(lower = $(l.lb), upper = $(l.ub))")
 
 ################################################################################
 ##########                                                            ##########
