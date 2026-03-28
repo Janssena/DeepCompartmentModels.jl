@@ -21,7 +21,6 @@ setup(::AbstractErrorModel, init::AbstractVector{<:Real}) = (σ = invsoftplus.(i
 setup(::ErrorModelSet, inits::AbstractVector{<:AbstractVector{<:Real}}) = (σ = map(Base.Fix1(broadcast, invsoftplus), inits), )
 
 ##### Full setup
-
 setup(rng, dcm::DeepCompartmentModel{<:SciMLBase.AbstractDEProblem}) = 
     Lux.setup(rng, dcm.model)
 
@@ -47,14 +46,21 @@ Setup function that initialises model parameters and state.
 """
 function setup(::FixedObjective, rng::Random.AbstractRNG, model::AbstractModel, ::Type{T}=Float32; init_sigma = nothing, params::Parameterisation=MeanSqrt()) where T
     ps_theta, st_theta = setup(rng, model)
+
     ps = (
         theta = ps_theta, 
-        error = setup(model.error, init_sigma)
     )
+    if !(model.error isa ImplicitError)
+        ps_error = setup(model.error, init_sigma)
+        merge(ps, (error = ps_error, ))
+    end
     ps_params = _convert_parameters(params, ps)
     st = (theta = st_theta, )
-    return _convert_types(T, ps_params), _convert_types(T, st)
+    type_fn = _get_type_fn(T)
+    return (ps_params, st) |> type_fn
 end
+
+_get_type_fn(T) = T == Float64 ? Lux.f64 : (T == Float32 ? Lux.f32 : Lux.f16)
 
 """
     setup(obj::MixedObjective, rng, model, population, ::Type{T}=Float32; init_sigma, params)
@@ -94,7 +100,8 @@ function setup(
         phi = st_phi
     )
     ps_params = _convert_parameters(params, ps)
-    return _convert_types(T, ps_params), _convert_types(T, st)
+    type_fn = _get_type_fn(T)
+    return (ps_params, st) |> type_fn
 end
 
 function setup_phi(obj::VariationalELBO{MF}, rng::Random.AbstractRNG, ::AbstractDEModel, population::Population, Ω::Symmetric; num_params, scale::Real=0.1) where MF
@@ -124,15 +131,6 @@ function indicator(n::Int, a::AbstractVector{Int}, ::Type{T}=Float32) where T
     end
     return Iₐ
 end
-
-_convert_types(::Type{T}, nt::NamedTuple) where T = fmap(Base.Fix1(_convert, T), nt)
-_convert(::Type{T}, x::Nothing) where T = x
-_convert(::Type{T}, x::Real) where T = convert(T, x)
-_convert(::Type{T}, x::AbstractArray{<:Real}) where T = convert(AbstractArray{T}, x) # Works for Symmetric and Diagonal as well.
-
-Functors.isleaf(::Cholesky) = true
-_convert(::Type{T}, x::Cholesky) where T = 
-    Cholesky(convert(AbstractArray{T}, x.factors), x.uplo, x.info)
 
 # TODO: change parameter name as well in the kp
 function _convert_parameters(::MeanVar, ps::NamedTuple) 
