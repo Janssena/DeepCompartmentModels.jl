@@ -6,8 +6,69 @@ abstract type FixedObjective <: AbstractObjective end
 struct MSE <: FixedObjective end
 (::MSE)(dcm, data, ps, st) = mse(dcm, data, ps, st)
 
+"""
+    mse(dcm, data, ps, st)
+
+Calculates the mean squared error of predictions with respect to the target `y` in the data.
+
+L = 1/n * ∑ᵢ (yᵢ - ŷᵢ)²
+
+## Arguments:
+- `dcm`: DeepCompartmentModel to use.
+- `data`: Data that is used to make predictions. Can be either a Population or any AbstractIndividual
+- `ps`: Model parameters. Contains all learnable parameters.
+- `st`: Model state. Contains additional parameters which are deemed constant when calculating gradients.
+"""
+function mse(model::AbstractDEModel{<:SciMLBase.AbstractDEProblem}, data::D, ps, st; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
+    z, _ = predict_de_parameters(model, data, ps, st)
+    return mse(model, data, z; kwargs...)
+end
+
+function mse(model::AbstractDEModel{<:UniversalDiffEq}, data::D, ps, st; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
+    ŷ = solve_for_target(model, data, ps, st; kwargs...)
+    return _mse(get_y(data), ŷ)
+end
+
+function mse(model::AbstractDEModel, data::D, z::AbstractArray; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
+    ŷ = solve_for_target(model, data, z; kwargs...)
+    return _mse(get_y(data), ŷ)
+end
+
+_mse(y, ŷ) = mean(map(mean ∘ Base.Fix1(broadcast, abs2), y - ŷ))
+
 struct SSE <: FixedObjective end
 (::SSE)(dcm, data, ps, st) = sse(dcm, data, ps, st)
+
+"""
+    sse(dcm, data, ps, st)
+
+Calculates the sum of squared errors of predictions with respect to the target `y` in the data.
+
+L = ∑ᵢ (yᵢ - ŷᵢ)²
+
+## Arguments:
+- `dcm`: DeepCompartmentModel to use.
+- `data`: Data that is used to make predictions. Can be either a Population or any AbstractIndividual
+- `ps`: Model parameters. Contains all learnable parameters.
+- `st`: Model state. Contains additional parameters which are deemed constant when calculating gradients.
+"""
+function sse(model::AbstractDEModel, data::D, ps, st; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
+    z, _ = predict_de_parameters(model, data, ps, st)
+    return sse(model, data, z; kwargs...)
+end
+
+function sse(model::AbstractDEModel{<:UniversalDiffEq}, data::D, ps, st; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
+    ŷ = solve_for_target(model, data, ps, st; kwargs...)
+    return _sse(get_y(data), ŷ)
+end
+
+function sse(model::AbstractDEModel, data::D, z::AbstractArray; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
+    ŷ = solve_for_target(model, data, z; kwargs...)
+    return _sse(get_y(data), ŷ)
+end
+
+_sse(y, ŷ) = sum(map(sum ∘ Base.Fix1(broadcast, abs2), y - ŷ))
+
 
 struct LogLikelihood <: FixedObjective end
 (::LogLikelihood)(dcm, data, ps, st) = -loglikelihood(dcm, data, ps, st)
@@ -41,7 +102,7 @@ Calculates the gradient with respect to the logjoint instead of the full ELBO.
 struct VariationalELBO{MF<:StaticBool, PD<:StaticBool, N<:StaticBool} <: MixedObjective
     idxs::Vector{Int}
     VariationalELBO(idxs::AbstractVector{Int}; mean_field = false, path_deriv = true, natural = false) = 
-        new{mean_field ? True : False, path_deriv ? True : False, natural ? True : False}(idxs)
+        new{static(mean_field), static(path_deriv), static(natural)}(idxs)
 end
 
 (::VariationalELBO{<:StaticBool,<:StaticBool,<:False})(dcm, data, ps, st) = -elbo(dcm, data, ps, st)
@@ -52,65 +113,6 @@ end
 Base.show(io::IO, obj::VariationalELBO{MF,PD,N}) where {MF,PD,N} =
     print(io, "VariationalELBO{mean_field = $(dynamic(MF())), path_deriv = $(dynamic(PD())), natural = $(dynamic(N()))}(idxs = $(obj.idxs))")
 
-"""
-    mse(dcm, data, ps, st)
-
-Calculates the mean squared error of predictions with respect to the target `y` in the data.
-
-L = 1/n * ∑ᵢ (yᵢ - ŷᵢ)²
-
-## Arguments:
-- `dcm`: DeepCompartmentModel to use.
-- `data`: Data that is used to make predictions. Can be either a Population or any AbstractIndividual
-- `ps`: Model parameters. Contains all learnable parameters.
-- `st`: Model state. Contains additional parameters which are deemed constant when calculating gradients.
-"""
-function mse(model::AbstractDEModel{<:SciMLBase.AbstractDEProblem}, data::D, ps, st; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
-    z, _ = predict_de_parameters(model, data, ps, st)
-    return mse(model, data, z; kwargs...)
-end
-
-function mse(model::AbstractDEModel{<:UniversalDiffEq}, data::D, ps, st; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
-    ŷ = solve_for_target(model, data, ps, st; kwargs...)
-    return _mse(get_y(data), ŷ)
-end
-
-function mse(model::AbstractDEModel, data::D, z::AbstractArray; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
-    ŷ = solve_for_target(model, data, z; kwargs...)
-    return _mse(get_y(data), ŷ)
-end
-
-_mse(y, ŷ) = mean(map(mean ∘ Base.Fix1(broadcast, abs2), y - ŷ))
-
-"""
-    sse(dcm, data, ps, st)
-
-Calculates the sum of squared errors of predictions with respect to the target `y` in the data.
-
-L = ∑ᵢ (yᵢ - ŷᵢ)²
-
-## Arguments:
-- `dcm`: DeepCompartmentModel to use.
-- `data`: Data that is used to make predictions. Can be either a Population or any AbstractIndividual
-- `ps`: Model parameters. Contains all learnable parameters.
-- `st`: Model state. Contains additional parameters which are deemed constant when calculating gradients.
-"""
-function sse(model::AbstractDEModel, data::D, ps, st; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
-    z, _ = predict_de_parameters(model, data, ps, st)
-    return sse(model, data, z; kwargs...)
-end
-
-function sse(model::AbstractDEModel{<:UniversalDiffEq}, data::D, ps, st; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
-    ŷ = solve_for_target(model, data, ps, st; kwargs...)
-    return _sse(get_y(data), ŷ)
-end
-
-function sse(model::AbstractDEModel, data::D, z::AbstractArray; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
-    ŷ = solve_for_target(model, data, z; kwargs...)
-    return _sse(get_y(data), ŷ)
-end
-
-_sse(y, ŷ) = sum(map(sum ∘ Base.Fix1(broadcast, abs2), y - ŷ))
 
 """
     loglikelihood(dcm, data, ps, st)
