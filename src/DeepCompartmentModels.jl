@@ -17,6 +17,7 @@ using Reexport
 @reexport import Accessors
 @reexport import Lux
 
+@reexport using Static
 @reexport using Distributions
 @reexport using OrdinaryDiffEq
 @reexport using DistributionsAD
@@ -26,7 +27,6 @@ import Zygote.ChainRules: @non_differentiable, @ignore_derivatives, ignore_deriv
 import Zygote
 import Random
 
-using Static
 using Functors
 using ThreadPools
 using LinearAlgebra

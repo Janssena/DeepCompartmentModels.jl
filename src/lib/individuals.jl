@@ -1,3 +1,5 @@
+# TODO: We'd ideally like only a single individual type as we move to tuple based Populations
+
 """
     abstract type AbstractIndividual{T} end
 
@@ -5,7 +7,7 @@ Supertype for various Individual types.
 """
 abstract type AbstractIndividual{T,O,I,C} end
 
-Base.show(io::IO, indv::AbstractIndividual{T,Bool}) where T = 
+Base.show(io::IO, indv::AbstractIndividual{T,Nothing}) where T = 
     print(io, "$(nameof(typeof(indv))){$T}(id = $(indv.id), ...)")
 
 Base.show(io::IO, indv::AbstractIndividual{T,<:AbstractVector}) where T = 
@@ -31,6 +33,7 @@ get_y(indv::AbstractIndividual) = indv.y
 ##########                        Individuals                         ##########
 ################################################################################
 
+# TODO: We can use Lux.f16 to change all the types, also inside of the callback!
 """
     BasicIndividual{T,O,I,C}(...)
 
@@ -39,7 +42,7 @@ This type of individual has a covariate vector that is assumed static over time,
 and only has a single type of observation of type T (i.e. `x`, `t`, and `y` are 
 one-dimensional).
 """
-struct BasicIndividual{T,O<:Union{Bool,Vector{Pair{T,T}}},I<:Union{Integer, AbstractString},C} <: AbstractIndividual{T,O,I,C}
+struct BasicIndividual{T,O<:Union{Nothing,<:AbstractVector{Pair{T,T}}},I<:Union{Integer, AbstractString},C} <: AbstractIndividual{T,O,I,C}
     id::I
     x::@NamedTuple{zeta::Vector{T}, error::Vector{T}}
     t::Vector{T}
@@ -52,10 +55,11 @@ end
 BasicIndividual(id, x::AbstractVector, t, y, cb, ::Type{T}=Float32; kwargs...) where {T} = 
     BasicIndividual(id, (zeta = x, error = empty(x)), t, y, cb, T; kwargs...)
 
-function BasicIndividual(id::I, x::NamedTuple{(:zeta,:error)}, t::AbstractVector, y::AbstractVector, cb::C, ::Type{T}=Float32; occasions::O=false, u0::AbstractVector=empty(y)) where {T,O,I,C}
+function BasicIndividual(id::I, x::NamedTuple{(:zeta,:error)}, t::AbstractVector, y::AbstractVector, cb::C, ::Type{T}=Float32; occasions=nothing, u0::AbstractVector=empty(y)) where {T,I,C}
     length(t) !== length(y) && throw(ErrorException("Length of time points vector does not match length of observations."))
     _callback_type_matches(cb, T) # warn if callback does not match type.
-    return BasicIndividual{T,O,I,C}(
+    occasions = !isnothing(occasions) ? fmap(T, occasions) : occasions
+    return BasicIndividual{T,typeof(occasions),I,C}(
         id, 
         fmap(Base.Fix1(convert, Vector{T}), x),
         map(Base.Fix1(convert, Vector{T}), (t, y, u0))...,
@@ -72,7 +76,7 @@ This type of individual has a covariate vector with multiple columns
 representing observed values of the covariates at specific time points. These 
 time points are provided in `t` (which is a NamedTuple{(:x,:y)}).
 """
-struct TimeVariableIndividual{T,O<:Union{Bool, Vector{Pair{T,T}}},I<:Union{Integer, AbstractString},C} <: AbstractIndividual{T,O,I,C}
+struct TimeVariableIndividual{T,O<:Union{Nothing, Vector{Pair{T,T}}},I<:Union{Integer, AbstractString},C} <: AbstractIndividual{T,O,I,C}
     id::I
     x::@NamedTuple{zeta::Matrix{T}, error::Matrix{T}}
     t::@NamedTuple{zeta::Matrix{T}, error::Matrix{T}, y::Vector{T}}
@@ -106,13 +110,14 @@ function TimeVariableIndividual(
     id::I, x::NamedTuple{(:zeta,:error)}, 
     t::NamedTuple{(:zeta,:error,:y), <:Tuple{<:AbstractMatrix,<:AbstractMatrix,<:AbstractVector}}, 
     y::AbstractVector, cb::C, ::Type{T}=Float32; 
-    u0::AbstractVector=empty(y), occasions::O=false) where {T,O,I,C}
+    u0::AbstractVector=empty(y), occasions=nothing) where {T,I,C}
 
     length(t.zeta) !== size(x.zeta, 2) && throw(ErrorException("Length of time points vector does not match length of covariates used in the PK model."))
     size(x.error, 2) !== size(t.error, 2) && throw(ErrorException("Length of time points vector does not match length of covariates used in the error model."))
     length(t.y) !== length(y) && throw(ErrorException("Length of time points vector does not match length of observations."))
     _callback_type_matches(cb, T)
-    return TimeVariableIndividual{T,I,C}(
+    occasions = !isnothing(occasions) ? fmap(T, occasions) : nothing
+    return TimeVariableIndividual{T,typeof(occasions),I,C}(
         id, 
         map(Base.Fix1(convert, Matrix{T}), x),
         map(Base.Fix1(broadcast, T), t),
@@ -195,10 +200,11 @@ end
 MOIndividual(id, x::AbstractVector, t, y, cb, ::Type{T}=Float32; kwargs...) where {T} = 
     MOIndividual(id, (zeta = x, error = empty(x)), t, y, cb, T; kwargs...)
 
-function MOIndividual(id::I, x::NamedTuple{(:zeta,:error)}, ts::AbstractVector{<:AbstractVector}, ys::AbstractVector{<:AbstractVector}, cb::C, ::Type{T}=Float32; occasions::O=false, u0::AbstractVector=empty(first(ys))) where {T,O,I,C}
+function MOIndividual(id::I, x::NamedTuple{(:zeta,:error)}, ts::AbstractVector{<:AbstractVector}, ys::AbstractVector{<:AbstractVector}, cb::C, ::Type{T}=Float32; occasions=nothing, u0::AbstractVector=empty(first(ys))) where {T,I,C}
     DeepCompartmentModels._callback_type_matches(cb, T) # warn if callback does not match type.
     t = sort(unique(vcat(ts...)))
-    return MOIndividual{T,O,I,C}(
+    occasions = !isnothing(occasions) ? fmap(T, occasions) : occasions
+    return MOIndividual{T,typeof(occasions),I,C}(
         id, 
         fmap(Base.Fix1(convert, Vector{T}), x),
         convert(Vector{T}, t),
@@ -243,8 +249,7 @@ end
 
 function _callback_type_matches(cb::CallbackSet, T) 
     for callback in cb.discrete_callbacks
-        matches = _callback_type_matches(callback, T)
-        if !matches
+        if !_callback_type_matches(callback, T)
             return false
         end
     end

@@ -92,8 +92,11 @@ Alias for DeepCompartmentModel(args...; kwargs...)
 """
 DCM(args...; kwargs...) = DeepCompartmentModel(args...; kwargs...)
 
-Base.show(io::IO, dcm::DeepCompartmentModel{SciMLBase.AbstractDEProblem}) = 
-    print(io, "DeepCompartmentModel{$(dcm.problem.f.f), $(dcm.error)}")
+Base.show(io::IO, dcm::DeepCompartmentModel{<:SciMLBase.AbstractDEProblem}) = 
+    print(io, "DeepCompartmentModel{de = $(dcm.problem.f.f), error = $(dcm.error)}")
+
+Base.show(io::IO, dcm::DeepCompartmentModel{<:ODEProblem}) = 
+    print(io, "DeepCompartmentModel{ode = $(dcm.problem.f.f), error = $(dcm.error)}")
 
 ################################################################################
 ##########                        Model API                           ##########
@@ -114,7 +117,7 @@ function predict_typ_parameters(dcm::DeepCompartmentModel, population::Populatio
     return ζ, st_local
 end
 
-predict_de_parameters(dcm::DeepCompartmentModel, data::D, ps::NamedTuple{(:theta,:error)}, st) where D<:Union{<:AbstractIndividual, Population{<:AbstractIndividual}} = 
+predict_de_parameters(dcm::DeepCompartmentModel, data::D, ps::Union{<:NamedTuple{(:theta,)},<:NamedTuple{(:theta,:error)}}, st) where D<:Union{<:AbstractIndividual, Population{<:AbstractIndividual}} = 
     predict_typ_parameters(dcm, data, ps, st)
 
 function predict_de_parameters(dcm::DeepCompartmentModel, data::D, ps::NamedTuple{(:theta,:error,:omega,:phi)}, st) where D<:Union{<:AbstractIndividual, Population{<:AbstractIndividual}}

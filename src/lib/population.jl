@@ -1,3 +1,6 @@
+
+# TODO: Make Population hold a tuple, so that we can mix different individual types
+# TODO: Make this a standalone package to isolate development?
 """
     Population{T<:AbstractIndividual} <: AbstractArray{T, 1}
 
