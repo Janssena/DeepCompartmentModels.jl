@@ -8,25 +8,25 @@ m = 3 # ode dim
 @testset "BasicIndividual" begin 
     # test types and dimensions
     for T in [Float16, Float32, Float64]
-        indv_basic = BasicIndividual("basic", (zeta = rand(p₁), error = rand(p₂)), rand(d), rand(d), CallbackSet(), T; initial = zeros(m))
+        indv_basic = BasicIndividual("basic", (zeta = rand(p₁), error = rand(p₂)), rand(d), rand(d), CallbackSet(), T; u0 = zeros(m))
         
         @test typeof(indv_basic).parameters[1] == T
         @test indv_basic.x isa @NamedTuple{zeta::Vector{T},error::Vector{T}}
-        @test eltype(indv_basic.t) == eltype(indv_basic.y) == eltype(indv_basic.initial) == T
+        @test eltype(indv_basic.t) == eltype(indv_basic.y) == eltype(indv_basic.u0) == T
         
         @test size(indv_basic.x.zeta) == (p₁, )
         @test size(indv_basic.x.error) == (p₂, )
         @test size(indv_basic.t) == (d, )
         @test size(indv_basic.y) == (d, )
-        @test size(indv_basic.initial) == (m, )
+        @test size(indv_basic.u0) == (m, )
     end
     # test Individual constructor
     x = rand(p₁)
     t = rand(d)
     y = rand(d)
-    initial = rand(m)
-    indv_basic1 = BasicIndividual("basic_1", x, t, y, CallbackSet(); initial = initial)
-    indv_basic2 = Individual("basic_2", x, t, y, CallbackSet(); initial = initial)
+    u0 = rand(m)
+    indv_basic1 = BasicIndividual("basic_1", x, t, y, CallbackSet(); u0)
+    indv_basic2 = Individual("basic_2", x, t, y, CallbackSet(); u0)
 
     @test indv_basic2 isa BasicIndividual
     @test typeof(indv_basic1) == typeof(indv_basic2)
@@ -44,7 +44,7 @@ m = 3 # ode dim
     @test isconcretetype(return_type(get_y, Tuple{typeof(indv_basic1)}))
 
     # Test transformation into TimeVariableIndividual
-    indv_basic = BasicIndividual("basic", (zeta = rand(p₁), error = rand(p₂)), rand(d), rand(d), CallbackSet(); initial = zeros(m))
+    indv_basic = BasicIndividual("basic", (zeta = rand(p₁), error = rand(p₂)), rand(d), rand(d), CallbackSet(); u0 = zeros(m))
     indv_time_var = DeepCompartmentModels._to_timevariable(indv_basic)
     T = typeof(indv_time_var).parameters[1]
     @test indv_time_var isa TimeVariableIndividual
@@ -57,7 +57,7 @@ m = 3 # ode dim
     @test size(indv_time_var.t.error) == (1, 1)
     @test size(indv_time_var.t.y) == (d, )
     @test size(indv_time_var.y) == (d, )
-    @test size(indv_time_var.initial) == (m, )
+    @test size(indv_time_var.u0) == (m, )
     
     # Copying individual, without changing callback
     indv_basic_copy = copy(indv_basic)
@@ -80,30 +80,30 @@ end
 @testset "TimeVariableIndividual" begin 
     # test types and dimensions
     for T in [Float16, Float32, Float64]
-        indv_time_var = TimeVariableIndividual("time_var", (zeta = rand(p₁, k), error = rand(p₂, k)), (zeta = rand(1, k), error = rand(1, k), y = rand(d)), rand(d), CallbackSet(), T; initial = zeros(m))
-        indv_time_var_vecs = TimeVariableIndividual("time_var_vecs", (zeta = rand(p₁, k), error = rand(p₂, k)), (zeta = rand(k), error = rand(k), y = rand(d)), rand(d), CallbackSet(), T; initial = zeros(m))
+        indv_time_var = TimeVariableIndividual("time_var", (zeta = rand(p₁, k), error = rand(p₂, k)), (zeta = rand(1, k), error = rand(1, k), y = rand(d)), rand(d), CallbackSet(), T; u0 = zeros(m))
+        indv_time_var_vecs = TimeVariableIndividual("time_var_vecs", (zeta = rand(p₁, k), error = rand(p₂, k)), (zeta = rand(k), error = rand(k), y = rand(d)), rand(d), CallbackSet(), T; u0 = zeros(m))
         
         for indv in [indv_time_var, indv_time_var_vecs]
             @test typeof(indv).parameters[1] == T
             @test indv.x isa @NamedTuple{zeta::Matrix{T},error::Matrix{T}}
             @test indv.t isa @NamedTuple{zeta::Matrix{T},error::Matrix{T},y::Vector{T}}
-            @test eltype(indv.t.zeta) == eltype(indv.t.error) == eltype(indv.t.y) == eltype(indv.y) == eltype(indv.initial) == T
+            @test eltype(indv.t.zeta) == eltype(indv.t.error) == eltype(indv.t.y) == eltype(indv.y) == eltype(indv.u0) == T
             @test size(indv.x.zeta) == (p₁, k)
             @test size(indv.x.error) == (p₂, k)
             @test size(indv.t.zeta) == (1, k)
             @test size(indv.t.error) == (1, k)
             @test size(indv.t.y) == (d, )
             @test size(indv.y) == (d, )
-            @test size(indv.initial) == (m, )
+            @test size(indv.u0) == (m, )
         end
     end
     # test Individual constructor without error covariates
     x = rand(p₁, k)
     t = (zeta = rand(k), y = rand(d))
     y = rand(d)
-    initial = rand(m)
-    indv_time_var1 = TimeVariableIndividual("time_var_1", x, t, y, CallbackSet(); initial = initial)
-    indv_time_var2 = Individual("time_var_2", x, t, y, CallbackSet(); initial = initial)
+    u0 = rand(m)
+    indv_time_var1 = TimeVariableIndividual("time_var_1", x, t, y, CallbackSet(); u0)
+    indv_time_var2 = Individual("time_var_2", x, t, y, CallbackSet(); u0)
 
     @test indv_time_var2 isa TimeVariableIndividual
     @test typeof(indv_time_var1) == typeof(indv_time_var2)
@@ -170,13 +170,13 @@ end
 
 @testset "Population" begin
     # all the same type
-    indv_basic = BasicIndividual("basic", rand(p₁), rand(d), rand(d), CallbackSet(); initial = zeros(m))
-    indv_basic_with_error = BasicIndividual("basic", (zeta = rand(p₁), error = rand(p₂)), rand(d), rand(d), CallbackSet(); initial = zeros(m))
-    indv_time_var = TimeVariableIndividual("time_var", rand(p₁, k), (zeta = rand(k), y = rand(d)), rand(d), CallbackSet(); initial = zeros(m))
-    indv_time_var_with_error = TimeVariableIndividual("time_var_with_error", (zeta = rand(p₁, k), error = rand(p₂, k)), (zeta = rand(k), error = rand(k), y = rand(d)), rand(d), CallbackSet(); initial = zeros(m))
+    indv_basic = BasicIndividual("basic", rand(p₁), rand(d), rand(d), CallbackSet(); u0 = zeros(m))
+    indv_basic_with_error = BasicIndividual("basic", (zeta = rand(p₁), error = rand(p₂)), rand(d), rand(d), CallbackSet(); u0 = zeros(m))
+    indv_time_var = TimeVariableIndividual("time_var", rand(p₁, k), (zeta = rand(k), y = rand(d)), rand(d), CallbackSet(); u0 = zeros(m))
+    indv_time_var_with_error = TimeVariableIndividual("time_var_with_error", (zeta = rand(p₁, k), error = rand(p₂, k)), (zeta = rand(k), error = rand(k), y = rand(d)), rand(d), CallbackSet(); u0 = zeros(m))
 
-    indv_basic_alt_type = BasicIndividual(1241551, rand(p₁), rand(d), rand(d), CallbackSet(), Float64; initial = zeros(m))
-    indv_basic_alt_id = BasicIndividual(1241551, rand(p₁), rand(d), rand(d), CallbackSet(); initial = zeros(m))
+    indv_basic_alt_type = BasicIndividual(1241551, rand(p₁), rand(d), rand(d), CallbackSet(), Float64; u0 = zeros(m))
+    indv_basic_alt_id = BasicIndividual(1241551, rand(p₁), rand(d), rand(d), CallbackSet(); u0 = zeros(m))
     indv_basic_alt_cb = copy(indv_basic, DiscreteCallback(() -> nothing, () -> nothing))
     
     population = Population([indv_basic, copy(indv_basic)])

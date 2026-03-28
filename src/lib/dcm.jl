@@ -1,7 +1,7 @@
 import InteractiveUtils: @code_lowered
 
 """
-    DeepCompartmentModel{T,D,M,S}
+    DeepCompartmentModel{P,M,E,S}
 
 Model architecture originally described in [janssen2022]. Originally uses a 
 neural network to learn the relationship between the covariates and the 
@@ -10,41 +10,31 @@ a compartment model.
 
 # Arguments
 - `problem::AbstractDEProblem`: DE problem describing the dynamical system.
-- `model`: Model to use for the prediction of DE parameters. The package focusses on the use of neural networks based on Lux.jl.
-- `T::Type`: DataType of parameters and predictions.
-- `dv_compartment::Int`: The index of the compartment for the prediction of the dependent variable. Default = 1.
+- `model`: Model to use for the prediction of DE parameters or DE components. The package focusses on the use of neural networks based on Lux.jl.
+- `error`: Error model to use for likelihood calculations.
+- `target`: The index of the partial derivative for the prediction of the dependent variable. Default = 1.
 - `sensealg`: Sensitivity algorithm to use for the calculation of gradients of the parameters with respect to the DESolution.
 
 \\
 [janssen2022] Janssen, Alexander, et al. "Deep compartment models: a deep learning approach for the reliable prediction of time‐series data in pharmacokinetic modeling." CPT: Pharmacometrics & Systems Pharmacology 11.7 (2022): 934-945.
 """
-struct DeepCompartmentModel{T,P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer,E,S} <: AbstractDEModel{T,P,M,E,S}
+struct DeepCompartmentModel{P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer,E<:AbstractErrorModel,T<:Union{<:Int,AbstractVector{<:Int}}, S<:SciMLBase.AbstractSensitivityAlgorithm} <: AbstractDEModel{P,M,E,S}
     problem::P
     model::M
-    dv_compartment::Int
     error::E
+    target::T
     sensealg::S
-    
-    function DeepCompartmentModel(
-        de::D, 
-        model::M,
-        error::E,
-        ::Type{T} = Float32; 
-        dv_compartment::Int = 1, 
-        sensealg::S = ForwardDiffSensitivity(; convert_tspan = true)
-    ) where {T,D<:SciMLBase.AbstractDEProblem,M,E,S}
-        problem = _rebuild_problem_type(de, T)
-        return new{T,typeof(problem),M,E,S}(problem, model, dv_compartment, error, sensealg)
-    end
+
+    DeepCompartmentModel(
+        problem::P, model::M, error::E=ImplicitError(); 
+        target::T = 1, sensealg::S = ForwardDiffSensitivity()
+    ) where {P<:SciMLBase.AbstractDEProblem, M, T, E<:AbstractErrorModel, S<:SciMLBase.AbstractSensitivityAlgorithm} = 
+        new{P,M,E,T,S}(problem, model, error, target, sensealg)
 end
 
-# TODO: this likely is not sufficient for all DEProblems
-_rebuild_problem_type(de::SciMLBase.AbstractDEProblem, T) = 
-    (Base.typename(typeof(de)).wrapper)(de.f, T.(de.u0), T.(de.tspan), T[])
-    
 # Constructors. 
 """
-    DeepCompartmentModel(ode_fn, model, error, T=Float32; kwargs...)
+    DeepCompartmentModel(ode_fn, model, error; target, sensealg)
 
 Convenience constructor that internally creates an ODEProblem based on the 
 passed ode_fn. Attempts to estimate the number of partial differential equations
@@ -54,17 +44,13 @@ present in the ode_fn.
 - `ode_fn::Function`: Function that describes the dynamical system.
 - `model`: Model to use for the prediction of DE parameters. The package focusses on the use of neural networks based on Lux.jl.
 - `error::AbstractErrorModel`: Error model to use. Should be one of [ImplicitError, AdditiveError, ProportionalError, CombinedError, CustomError].
-- `T::Type`: DataType of parameters and predictions.
 
 # Keyword arguments
-- `dv_compartment::Int`: The index of the compartment for the prediction of the dependent variable. Default = 1.
+- `target`: The index(es) of the compartment(s) for the prediction of the dependent variable. Default = 1.
 - `sensealg`: Sensitivity algorithm to use for the calculation of gradients of the parameters with respect to the DESolution.
 """
-DeepCompartmentModel(ode_fn::Function, model, error::AbstractErrorModel, ::Type{T} = Float32; kwargs...) where T = 
-    DeepCompartmentModel(ode_fn, _estimate_num_partials(ode_fn), model, error, T; kwargs...)
-
-DeepCompartmentModel(ode_fn::Function, model, ::Type{T} = Float32; kwargs...) where T = 
-    DeepCompartmentModel(ode_fn, _estimate_num_partials(ode_fn), model, ImplicitError(), T; kwargs...)
+DeepCompartmentModel(ode_fn::Function, model, error::AbstractErrorModel=ImplicitError(); kwargs...) = 
+    DeepCompartmentModel(ode_fn, _estimate_num_partials(ode_fn), model, error; kwargs...)
 
 # Hack, does not work if setindex! is called on other variables or if never called (as is the case in non in-place functions)
 function _estimate_num_partials(ode_fn::Function)
@@ -81,27 +67,23 @@ function _estimate_num_partials(ode_fn::Function)
 end
 
 """
-DeepCompartmentModel(ode_fn, num_partials, model, error, T=Float32; kwargs...)
+DeepCompartmentModel(ode_fn, num_partials, model, error=ImplicitError(); target, sensealg)
 
 Convenience constructor that internally creates an ODEProblem based on the 
 passed ode_fn.
 
 # Arguments
 - `ode_fn::Function`: Function that describes the dynamical system.
-- `num_partials::Int`: The number of partial differential equations present in the ode_fn.
+- `num_partials::Int`: The number of partial differential equations present in the `ode_fn`.
 - `model`: Model to use for the prediction of DE parameters. The package focusses on the use of neural networks based on Lux.jl.
 - `error::AbstractErrorModel`: Error model to use. Should be one of [ImplicitError, AdditiveError, ProportionalError, CombinedError, CustomError].
-- `T::Type`: DataType of parameters and predictions.
 
 # Keyword arguments
-- `dv_compartment::Int`: The index of the compartment for the prediction of the dependent variable. Default = 1.
-- `sensealg`: Sensitivity algorithm to use for the calculation of gradients of the parameters with respect to the DESolution.
+- `target`: The index(es) of the compartment(s) for the prediction of the dependent variable. Default = 1.
+- `sensealg`: Sensitivity algorithm to use for the calculation of gradients of the parameters with respect to the DESolution. Default = ForwardDiffSensitivity().
 """
-DeepCompartmentModel(ode_fn::Function, num_partials::Int, model, error::AbstractErrorModel, ::Type{T} = Float32; kwargs...) where T = 
-    DeepCompartmentModel(ODEProblem(ode_fn, zeros(T, num_partials), (T(-0.1), one(T)), T[]), model, error, T; kwargs...)
-
-DeepCompartmentModel(ode_fn::Function, num_partials::Int, model, ::Type{T} = Float32; kwargs...) where T = 
-    DeepCompartmentModel(ODEProblem(ode_fn, zeros(T, num_partials), (T(-0.1), one(T)), T[]), model, ImplicitError(), T; kwargs...)
+DeepCompartmentModel(ode_fn::Function, num_partials::Int, model, error::AbstractErrorModel=ImplicitError(); kwargs...) = 
+    DeepCompartmentModel(ODEProblem(ode_fn, zeros(num_partials), (-0.1, 1.)), model, error; kwargs...)
 
 """
 DCM(args...; kwargs...)
@@ -110,27 +92,55 @@ Alias for DeepCompartmentModel(args...; kwargs...)
 """
 DCM(args...; kwargs...) = DeepCompartmentModel(args...; kwargs...)
 
-Base.show(io::IO, dcm::DeepCompartmentModel{T,D,M,E,S}) where {T,D,M,E,S} = print(io, "DeepCompartmentModel{$T, $(dcm.problem.f.f), $(dcm.error)}")
+Base.show(io::IO, dcm::DeepCompartmentModel{<:SciMLBase.AbstractDEProblem}) = 
+    print(io, "DeepCompartmentModel{de = $(dcm.problem.f.f), error = $(dcm.error)}")
+
+Base.show(io::IO, dcm::DeepCompartmentModel{<:ODEProblem}) = 
+    print(io, "DeepCompartmentModel{ode = $(dcm.problem.f.f), error = $(dcm.error)}")
 
 ################################################################################
 ##########                        Model API                           ##########
 ################################################################################
 
-function predict_typ_parameters(dcm::DeepCompartmentModel, data::Union{AbstractIndividual, Population{<:AbstractIndividual}}, ps, st)
+function predict_typ_parameters(dcm::DeepCompartmentModel, data::D, ps, st) where D<:Union{<:AbstractIndividual, Population{<:AbstractIndividual}}
     ζ, st_θ = dcm.model(get_x(data), ps.theta, st.theta)
-    return ζ, merge(st, (theta = st_θ, ))
+    return ζ, Accessors.@set st.theta = st_θ
 end
 
-# TODO: TimeVariable version probably gives a vector of ζ and st like this
 function predict_typ_parameters(dcm::DeepCompartmentModel, population::Population{<:TimeVariableIndividual}, ps, st)
-    ζ, st_θ = dcm.model.(get_x(population), (ps.theta,), (st.theta,))
-    return ζ, merge(st, (theta = st_θ[end], ))
+    st_local = deepcopy(st)
+    ζ = map(get_x(population)) do xᵢ
+        ζᵢ, st_θ = dcm.model(xᵢ, ps.theta, st.theta)
+        Accessors.@reset st_local.theta = st_θ
+        return ζᵢ
+    end
+    return ζ, st_local
 end
 
-function predict(dcm::DeepCompartmentModel, data, ps_, st; individual::Bool = false, kwargs...)
-    ps = constrain(dcm, ps_)
-    type = individual ? MixedObjective : FixedObjective # Any MixedObjective will do here
-    z, _ = predict_de_parameters(type, dcm, data, ps, st)
+predict_de_parameters(dcm::DeepCompartmentModel, data::D, ps::Union{<:NamedTuple{(:theta,)},<:NamedTuple{(:theta,:error)}}, st) where D<:Union{<:AbstractIndividual, Population{<:AbstractIndividual}} = 
+    predict_typ_parameters(dcm, data, ps, st)
 
-    return forward_ode(dcm, data, z; kwargs...)
+function predict_de_parameters(dcm::DeepCompartmentModel, data::D, ps::NamedTuple{(:theta,:error,:omega,:phi)}, st) where D<:Union{<:AbstractIndividual, Population{<:AbstractIndividual}}
+    ζ, st_theta = predict_typ_parameters(dcm, data, ps, st)
+    η = get_random_effects(ps, st)
+    z = ζ .* exp.(η)
+    return z, Accessors.@set st.theta = st_theta
+end
+
+
+function predict(dcm::AbstractDEModel, data, ps, st; individual = true, target = true, kwargs...)
+    if individual
+        ps_local = ps
+    else
+        _keys = filter(!∈([:omega, :phi]), keys(ps))
+        ps_local = ps[_keys]
+    end
+
+    z, _ = predict_de_parameters(dcm, data, ps_local, st)
+    
+    if target
+        return solve_for_target(dcm, data, z; kwargs...)
+    else
+        return solve(dcm, data, z; kwargs...)
+    end
 end

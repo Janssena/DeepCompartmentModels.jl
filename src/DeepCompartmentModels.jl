@@ -1,73 +1,79 @@
 module DeepCompartmentModels
 
+import OrdinaryDiffEq.SciMLBase
+
+abstract type AbstractModel{M,E} end
+abstract type AbstractDEModel{P,M,E,S<:SciMLBase.AbstractSensitivityAlgorithm} <: AbstractModel{M,E} end
+
+abstract type Parameterisation end
+struct MeanVar <: Parameterisation end # Is used with Natural gradients / Bayesian Learning Rule
+struct MeanSqrt <: Parameterisation end # needs to be constrained during optimization
+
+export  AbstractModel, AbstractDEModel, Parameterisation, MeanVar, MeanSqrt
+
 using Reexport
 
 @reexport import Optimisers
+@reexport import Accessors
 @reexport import Lux
 
+@reexport using Static
 @reexport using Distributions
-@reexport using DistributionsAD
 @reexport using OrdinaryDiffEq
+@reexport using DistributionsAD
 @reexport using SciMLSensitivity
-@reexport using ComponentArrays
 
 import Zygote.ChainRules: @non_differentiable, @ignore_derivatives, ignore_derivatives
-import SciMLBase
-import FiniteDiff
 import Zygote
 import Random
-import Optim
 
 using Functors
+using ThreadPools
 using LinearAlgebra
-using PartialFunctions
+using InvertedIndices
+using ComponentArrays
+using LogExpFunctions
 
 include("lib/compartment_models.jl");
 export  unpack, one_comp!, one_comp_abs!, two_comp!, two_comp_abs!
 
 include("lib/individuals.jl"); include("lib/population.jl");
-export  AbstractIndividual, BasicIndividual, TimeVariableIndividual, Individual, 
-        Population, get_x, get_t, get_tx, get_y, load
-
-include("lib/model.jl");
-export  predict, forward_ode, forward_ode_with_dv, construct_p, AbstractModel,
-        AbstractDEModel, Parameterization, MeanSqrt, MeanVar
+export  AbstractIndividual, BasicIndividual, TimeVariableIndividual, MOIndividual, 
+        Individual, Population, get_x, get_t, get_tx, get_y, load
 
 include("lib/error.jl");
-export  AdditiveError, ProportionalError, CombinedError, CustomError, 
-        AbstractErrorModel, init_sigma, make_dist
+export  AbstractErrorModel, AdditiveError, ProportionalError, CombinedError, 
+        CustomError, ErrorModelSet, make_dist, var
 
-include("lib/objectives.jl");
-export  AbstractObjective, FixedObjective, MixedObjective, SSE, LogLikelihood, 
-        FO, FOCE, VariationalELBO, MeanField, FullRank, objective, logprior, 
-        logq, getq, elbo, optimize_etas, predict_de_parameters
-        
-include("lib/constrain.jl");
-export  constrain
-
-include("lib/mixed_effects.jl");
-export  get_random_effects, make_etas
+include("lib/dcm.jl");
+export  DeepCompartmentModel, DCM, predict_typ_parameters, predict_de_parameters, 
+        predict
 
 include("lib/nn.jl");
 export  StandardNeuralNetwork, SNN, predict
 
-include("lib/dcm.jl");
-export  DeepCompartmentModel, DCM, forward, predict_typ_parameters
+include("lib/ude.jl");
+export  UniversalDiffEq, AbstractUDEType, BasicUDE, TimeConcatUDE, build_problem
 
-include("lib/node.jl");
-export NeuralODE
+include("lib/solve.jl");
+export  solve, solve_for_target, construct_p
 
-include("lib/low_dim_node.jl");
-export  LowDimensionalNeuralODE, LowDimNODE
+include("lib/random_effects.jl");
+export  get_random_effects, make_etas, sample_gaussian, update_epsilon!
 
-include("lib/auto_encoding_node.jl");
-export  AutoEncodingNeuralODE, VAENODE
+include("lib/objectives.jl");
+export  MSE, SSE, LogLikelihood, VariationalELBO, mse, sse, 
+        loglikelihood, kldivergence, logprior, logq, getq, logjoint, 
+        elbo
 
-include("lib/initializers.jl");
-export  setup, init_theta, init_error, init_omega, init_phi
+include("lib/setup.jl");
+export  setup, setup_phi
 
-include("lib/optimization.jl")
-export  fit, update_state
+include("lib/gradients.jl");
+export  gradient, create_batches, take_batch, residual_error_value_and_gradient
+
+include("lib/vem.jl");
+export  m_step, optimise_omega, optimise_residual_error
 
 include("lib/callbacks.jl");
 export  generate_dosing_callback

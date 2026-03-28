@@ -1,3 +1,5 @@
+import Random 
+
 ################################################################################
 ##########                                                            ##########
 ##########                       Normalize layer                      ##########
@@ -13,26 +15,27 @@ length of `lb` and `ub` should match the input vector.
 - `lb`: lower bound, default = zero(ub).
 - `ub`: upper bound.
 """
-struct Normalize{T} <: Lux.AbstractLuxLayer
-    lb::Vector{T}
-    ub::Vector{T}
-    Normalize(lb::AbstractVector, ub::AbstractVector, ::Type{T}=Float32) where T = new{T}(T.(lb), T.(ub))
-    Normalize(ub::AbstractVector, ::Type{T}=Float32) where T = new{T}(zeros(T, length(ub)), T.(ub))
+struct Normalize{T<:AbstractVector{<:Real}} <: Lux.AbstractLuxLayer
+    lb::T
+    ub::T
 end
 
-Normalize(lb::Real, ub::Real, ::Type{T}=Float32) where T = Normalize([lb], [ub], T)
-Normalize(ub::Real, ::Type{T}=Float32) where T = Normalize([ub], T)
+Normalize(lb::Real, ub::Real) = Normalize([lb], [ub])
+Normalize(ub::Real) = Normalize([ub])
+Normalize(ub::AbstractVector) = Normalize(zero(ub), ub)
 
 Lux.initialparameters(::Random.AbstractRNG, ::Normalize) = NamedTuple()
-Lux.initialstates(::Random.AbstractRNG, l::Normalize) = (lb = l.lb, ub = l.ub)
+Lux.initialstates(::Random.AbstractRNG, l::Normalize) = (lb = Float32.(l.lb), ub = Float32.(l.ub))
 
 Lux.parameterlength(::Normalize) = 0
 Lux.statelength(l::Normalize) = 2 * length(l.ub)
 
 function (l::Normalize)(x::AbstractArray, ps, st::NamedTuple)
-    y = (x .- st.lb) ./ (st.ub - st.lb)
+    y = @. (x - st.lb) / (st.ub - st.lb)
     return y, st
 end
+
+Base.show(io::IO, l::Normalize) = print(io, "Normalize(lower = $(l.lb), upper = $(l.ub))")
 
 ################################################################################
 ##########                                                            ##########
@@ -116,29 +119,32 @@ julia> layer = Combine(1 => [1], 2 => [1], 3 => [2]) # Connects branch 1 to outp
 Combine()
 ```
 """
-struct Combine{T1, T2} <: Lux.AbstractLuxLayer
+struct Combine{T, P} <: Lux.AbstractLuxLayer
     out_dim::Int
-    pairs::T2
+    pairs::P
 end
 
 function Combine(pairs::Vararg{Pair{Int64, Vector{Int64}}}; type::Type{T} = Float32) where T
     out_dim = maximum([maximum(pairs[i].second) for i in eachindex(pairs)])
-    return Combine{T, typeof(pairs)}(out_dim, pairs)
+    return Combine(out_dim, pairs; type)
 end
 
-function get_state(l::Combine{T1, T2}) where {T1, T2}
-    indicators = Vector{Matrix{T1}}(undef, length(l.pairs))
-    negatives = Vector{Vector{T1}}(undef, length(l.pairs))
+Combine(out_dim::Int, pairs::Vararg{Pair{Int64, Vector{Int64}}}; type::Type{T} = Float32) where T = 
+    Combine{T, typeof(pairs)}(out_dim, pairs)
+
+function _set_init_state(l::Combine{T, P}) where {T, P}
+    indicators = Vector{Matrix{T}}(undef, length(l.pairs))
+    negatives = Vector{Vector{T}}(undef, length(l.pairs))
     for pair in l.pairs
-        Iₛ = indicator(l.out_dim, pair.second, T1)
+        Iₛ = indicator(l.out_dim, pair.second, T)
         indicators[pair.first] = Iₛ
-        negatives[pair.first] = abs.(vec(sum(Iₛ, dims=2)) .- one(T1))
+        negatives[pair.first] = abs.(vec(sum(Iₛ, dims=2)) .- one(T))
     end
     return (indicators = indicators, negatives = negatives)
 end
 
 Lux.initialparameters(::Random.AbstractRNG, ::Combine) = NamedTuple()
-Lux.initialstates(::Random.AbstractRNG, l::Combine) = get_state(l)
+Lux.initialstates(::Random.AbstractRNG, l::Combine) = _set_init_state(l)
 Lux.parameterlength(::Combine) = 0
 Lux.statelength(l::Combine) = 2 * l.out_dim * length(l.pairs)
 
@@ -279,7 +285,7 @@ function interpret_branch(ann::Lux.AbstractLuxContainerLayer, ps, st, covariate_
     end
 
     norm_layer = findfirst(layer -> typeof(layer) <: Normalize, ann.layers)
-    if norm_layer == nothing
+    if isnothing(norm_layer)
         throw(ErrorException("No Normalize layer found in this model."))
     end
     norm = ann.layers[norm_layer]

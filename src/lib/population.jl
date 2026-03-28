@@ -1,3 +1,6 @@
+
+# TODO: Make Population hold a tuple, so that we can mix different individual types
+# TODO: Make this a standalone package to isolate development?
 """
     Population{T<:AbstractIndividual} <: AbstractArray{T, 1}
 
@@ -28,7 +31,9 @@ function Population(data::AbstractVector{T}) where {T<:AbstractIndividual}
                 data = _to_timevariable.(data)
             end
         end
-        
+        # TODO: need to check if resulting types is a Union.
+        # Occassions might also be a problem when a mix.
+
         # Parameter types are different
         if length(unique(map(Base.Fix2(getproperty, :parameters), types))) !== 1
             throw(ErrorException("Parametric types of Individuals do not match. Make sure that the ids, Number type, and callbacks are all of the same type."))
@@ -51,7 +56,7 @@ Base.size(pop::Population) = (pop.count, )
 Base.similar(::Population, ::Type{T}, dims::Dims) where {T} = Population(T, dims)
 Base.getindex(pop::Population, idx::Int) = getindex(pop.data, idx) # No default
 Base.setindex!(pop::Population{T}, v::T, idx::Int) where {T} = (pop.data[idx] = v)
-Base.showarg(io::IO, ::Population{T}, toplevel) where T = print(io, "Population{$(T.name.name){$(T.parameters[1])}}")
+Base.showarg(io::IO, ::Population{T}, toplevel) where T = print(io, "Population{$(nameof(T)){$(T.parameters[1])}}")
 
 function get_x(pop::Population{T}, key::Symbol=:zeta) where T<:BasicIndividual
     x = zeros(first(T.parameters), length(get_x(pop[1], key)), pop.count)
