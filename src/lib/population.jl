@@ -1,142 +1,76 @@
-abstract type AbstractIndividual{I,X,T,Y,C} end
 
-Base.show(io::IO, indv::I) where {I<:AbstractIndividual} = print(io, "$(I.name.name){id = $(indv.id), ...)")
-
-################################################################################
-##########                        Individuals                         ##########
-################################################################################
-
+# TODO: Make Population hold a tuple, so that we can mix different individual types
+# TODO: Make this a standalone package to isolate development?
 """
-    BasicIndividual(...)
+    Population{T<:AbstractIndividual} <: AbstractArray{T, 1}
 
-Struct holding the data for a single subject for standard PK or PD analyses.
+Array holding a collection of Individuals that have the same type.
 """
-struct BasicIndividual{I<:Union{Integer, AbstractString}, X, T, Y<:AbstractVector, C} <: AbstractIndividual{I,X,T,Y,C}
-    id::I
-    x::X # Vector/Matrix or NamedTuple with multi-component setup, e.g. (cov = ..., error = ...)
-    t::T # Vector or NamedTuple
-    y::Y # Vector
-    callback::C
-    initial::Y
-end
-# Constructors, TODO: set common type (default = Float32) -> how to do this for the callback?
-"""
-    BasicIndividual(x, t, y, callback; id, initial)
-
-# Arguments
-- `x`: Subject specific covariates. If Matrix is passed, predictions can change over time.
-- `t`: Time points of observations. If the subject has time-variable covariates, a NamedTuple (x = [...], y = [...]) should be passed.
-- `y::AbstractVector`: Observations. Must be a vector. Currently only supports a single DV.
-- `callback`: Differential equation callback containing treatment interventions.
-- `id`: Patient id to store in the Individual instance.
-- `initial`: Initial value of the dependent value at t = 0. Default = [].
-"""
-function BasicIndividual(x::X, t::T, y::Y, callback::C; initial::Y=empty(y), id::I = "") where {I,X,T,Y,C}
-    return BasicIndividual{I,X,T,Y,C}(id, x, t, y, callback, initial)
-end
-
-"""
-    Individual(...)
-
-Alias for constructing a BasicIndividual.
-"""
-Individual(args...; kwargs...) = BasicIndividual(args...; kwargs...)
-
-"""
-    is_timevariable(individual)
-
-Returns whether the individual has time variable effects.
-"""
-is_timevariable(::AbstractIndividual{I,X,T,Y,C}) where {I,X,T,Y,C} = X <: AbstractMatrix && T <: NamedTuple && :x in fieldnames(T)
-
-function make_timevariable(indv::I) where I<:AbstractIndividual
-    if is_timevariable(indv) return indv end
-
-    res = NamedTuple()
-    for field in fieldnames(I)
-        property = getproperty(indv, field)
-        if field == :x
-            adjusted_property = reshape(property, length(property), 1)
-        elseif field == :t
-            adjusted_property = (x = zero.(property[1:1]), y = property,)
-        else
-            adjusted_property = property
-        end
-        res = merge(res, [field => adjusted_property])
-    end
-
-    return Base.typename(I).wrapper(res[:x], res[:t], res[:y], res[:callback];id = res[:id], initial = res[:initial])
-end
-
-# TODO: figure out why fields from individuals are accumulated through Zygote
-get_x(individual::AbstractIndividual) = @ignore_derivatives individual.x
-get_y(individual::AbstractIndividual) = @ignore_derivatives individual.y
-get_t(individual::AbstractIndividual{I,X,T,Y,C}) where {I,X<:AbstractMatrix,T<:NamedTuple,Y,C} = @ignore_derivatives individual.t.y 
-get_t(individual::AbstractIndividual) = @ignore_derivatives individual.t
-
-################################################################################
-##########                        Population                          ##########
-################################################################################
-
-struct Static end
-struct TimeVariable end
-
-"""
-    Population(AbstractIndividual[...])
-
-Combines a vector of individuals into a Population. Makes sure all the 
-Individuals are of the same type. If any subject has time-dependent effects, all 
-Individuals are transformed to the time-variable format.
-"""
-struct Population{T,I<:AbstractIndividual} <: AbstractArray{I, 1}
-    indvs::Vector{I}
+struct Population{T<:AbstractIndividual} <: AbstractArray{T, 1}
+    data::Vector{T}
     count::Int
-    # Constructor
-    function Population(indvs::AbstractVector{<:AbstractIndividual})
-        type = Static()
-        timevar_idxs = is_timevariable.(indvs)
-        if any(timevar_idxs)
-            type = TimeVariable()
-            reference = indvs[findfirst(isequal(1), timevar_idxs)]
-            indvs_ = map(make_timevariable, indvs)
-        else
-            reference = indvs[1]
-            indvs_ = convert(Vector{typeof(reference)}, indvs)
+end
+
+"""
+    Population(data::AbstractVector{AbstractIndividual})
+
+Constructor to create a Population. Automatically detects the Individual types 
+and attemps to harmonize them if multiple types are passed.
+
+## Arguments
+
+  - `data <: AbstractVector{AbstractIndividual}`: A vector containing the Individuals in the population.
+"""
+function Population(data::AbstractVector{T}) where {T<:AbstractIndividual} 
+    types = typeof.(data)
+    if length(unique(types)) !== 1
+        # type names are different -> make all TimeVariable
+        if length(unique(map(Base.Fix2(getproperty, :name), types))) !== 1
+            if any(isa.(data, TimeVariableIndividual))
+                @info "Detected a mix of Individual types in `data`. Changed all Individuals to TimeVariableIndividuals."
+                data = _to_timevariable.(data)
+            end
         end
-        return new{typeof(type), typeof(reference)}(indvs_, length(indvs_))
+        # TODO: need to check if resulting types is a Union.
+        # Occassions might also be a problem when a mix.
+
+        # Parameter types are different
+        if length(unique(map(Base.Fix2(getproperty, :parameters), types))) !== 1
+            throw(ErrorException("Parametric types of Individuals do not match. Make sure that the ids, Number type, and callbacks are all of the same type."))
+        end
     end
-    Population(T::Type, indvs::AbstractVector{I}, count) where I<:AbstractIndividual = new{T, I}(indvs, count)
+
+    new_type = only(unique(typeof.(data)))
+    return Population{new_type}(Vector{new_type}(data), length(data))
 end
 
-is_timevariable(::Population{T,I}) where {T<:Static,I} = false
-is_timevariable(::Population{T,I}) where {T<:TimeVariable,I} = true
+# Population(data::AbstractVector{T}) where T<:Union{BasicIndividual, TimeVariableIndividual} = 
+#     Population{T}(data, length(data))
 
-Base.showarg(io::IO, ::Population{T,I}, toplevel) where {T,I} = print(io, "Population{$(T.name.name), $(I.name.name)}")
+"""Initializing an empty Population."""
+Population(::Type{T}, dims::Dims) where {T<:AbstractIndividual} = 
+    Population{T}(Vector{T}(undef, dims), only(dims))
 
-
-Base.iterate(pop::Population, state=1) = state > pop.count ? nothing : (pop.indvs[state], state+1)
-Base.eltype(::Type{Population{T, I}}) where {T,I} = I
-Base.length(pop::Population) = pop.count
-
-Base.size(pop::Population) = (pop.count,)
 Base.IndexStyle(::Type{<:Population}) = IndexLinear()
-Base.getindex(pop::Population, i::Int) = pop.indvs[i]
-Base.getindex(pop::Population{T,I}, idxs::AbstractVector) where {T,I} = @ignore_derivatives Population(T, pop.indvs[idxs], length(idxs))
+Base.size(pop::Population) = (pop.count, )
+Base.similar(::Population, ::Type{T}, dims::Dims) where {T} = Population(T, dims)
+Base.getindex(pop::Population, idx::Int) = getindex(pop.data, idx) # No default
+Base.setindex!(pop::Population{T}, v::T, idx::Int) where {T} = (pop.data[idx] = v)
+Base.showarg(io::IO, ::Population{T}, toplevel) where T = print(io, "Population{$(nameof(T)){$(T.parameters[1])}}")
 
-function Base.getproperty(pop::Population, f::Symbol) 
-    if f == :x
-        return get_x(pop)
-    elseif f == :t
-        return get_t(pop)
-    elseif f == :y
-        return get_y(pop)
-    else 
-        return getfield(pop, f)
+function get_x(pop::Population{T}, key::Symbol=:zeta) where T<:BasicIndividual
+    x = zeros(first(T.parameters), length(get_x(pop[1], key)), pop.count)
+    for i in eachindex(pop)
+        x[:, i] .= get_x(pop[i], key)
     end
+    return x
 end
 
-get_x(population::Population) = @ignore_derivatives stack([indv.x for indv in population.indvs])
-get_y(population::Population) = @ignore_derivatives [indv.y for indv in population.indvs]
-get_t(population::Population) = @ignore_derivatives [indv.t for indv in population.indvs]
+get_x(pop::Population{T}, key::Symbol=:zeta) where T<:TimeVariableIndividual = [get_x(indv, key) for indv in pop]
+get_t(pop::Population) = [get_t(indv) for indv in pop]
+get_y(pop::Population) = [get_y(indv) for indv in pop]
+
+@non_differentiable get_x(::Population, ::Symbol)
+@non_differentiable get_y(::Population)
 
 load() = nothing # Is implemented by extensions

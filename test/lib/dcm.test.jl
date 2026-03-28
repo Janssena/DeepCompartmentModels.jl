@@ -1,7 +1,9 @@
 @testset "Run through entire processs" begin
+    callback = generate_dosing_callback([0 1 60 1/60])
+    
     population = Population([
-        Individual(Float32[1., 1.], Float32[12, 24], Float32[1., 0.3], generate_dosing_callback([0 1 60 1/60]); id = "fake_1"),
-        Individual(Float32[0., 0.], Float32[12, 24], Float32[1., 0.3], generate_dosing_callback([0 1 60 1/60]); id = "fake_2")
+        Individual("test_1", [1., 1.], [12., 24], [1., 0.3], callback)
+        Individual("test_2", [0., 0.], [12., 24], [1., 0.3], callback)
     ])
 
     ann = Lux.Chain(

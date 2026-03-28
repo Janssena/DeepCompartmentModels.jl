@@ -11,13 +11,7 @@ unpack(p::AbstractVector, _) = p
 Enables the use of parameters that change over time. Collects the column of the 
 parameter matrix that matches the current intergrator time point.
 """
-function unpack(p::AbstractMatrix, t) # TODO: can we set the type of t? Can become Dual
-    view = @view p[1, :]
-    return _take_col(p, findlast(<(t), view))
-    # Above saves one allocation versus below 🌠
-    # index = findlast(<(t), p[1, :])
-    # return p[2:end, index === nothing ? 1 : index] # Should be a view
-end
+unpack(p::AbstractMatrix, t) = _take_col(p, findlast(<(t), view(p, 1, :)))
 
 _take_col(p, ::Nothing) = @view p[2:end, 1]
 _take_col(p, index::Int) = @view p[2:end, index]

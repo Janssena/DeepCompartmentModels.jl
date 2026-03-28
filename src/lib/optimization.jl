@@ -108,7 +108,7 @@ function create_batches(M::Int, n::Int)
     return map(Base.Fix1(getindex, idxs), batches) # randomize indexes in each batch
 end
 
-create_batches(M::Int, population::Population) = create_batches(M, population.count)
+create_batches(M::Int, population::Population) = create_batches(M, length(population))
 
 function take_batch(idxs::AbstractVector{<:Int}, population::Population, ps, st)
     ps_new, st_new = ps, st
@@ -180,7 +180,7 @@ Sets each epsilon in st to `n` samples from N(0, I).
 """
 function update_state_epsilon(st::NamedTuple, num_samples = 1) 
     # TODO: what if epsilon is not the last element in keypath here?
-    return Functors.fmapstructure_with_path(
+    return fmapstructure_with_path(
         (path, x) -> :epsilon in path ? randn(Random.GLOBAL_RNG, eltype(x), size(x)[begin:end-1]..., num_samples) : x, st; cache = nothing)
         # (path, x) -> :epsilon in path ? _randn_epsilon(x, num_samples) : x, st; cache = nothing)
 end
