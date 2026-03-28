@@ -1,18 +1,17 @@
-print("\tLoading local DeepCompartmentModels package...")
-include("../src/DeepCompartmentModels.jl");
-println(" Done!")
-
 import Core.Compiler: return_type, isconcretetype
 
-using .DeepCompartmentModels
 using Test
+using DataFrames
+@info "Loading local DeepCompartmentModels package..."
+using DeepCompartmentModels
+println("Done!")
 
 @info "Starting tests..."
 
 begin
     # TODO: Test generate_dosing_callback before individuals
     @testset "Populations and Individuals" begin
-        include("population.test.jl")
+        include("lib/population.test.jl")
     end
     
     @testset "Objectives" begin
