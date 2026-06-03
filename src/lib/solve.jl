@@ -5,7 +5,7 @@ SciMLBase.solve(model::AbstractDEModel, individual::AbstractIndividual, z; kwarg
     solve(problem, individual, z; solver = Tsit5(), interpolate = false, saveat = get_t(individual), kwargs...)
 
 Extends the solve function from SciMLBase to simplify the solving of differential equations
-for the DeepCompartmentModels ecosystem.
+within the DeepCompartmentModels ecosystem.
 
 # Arguments:
 - `problem`: DEProblem to solve.
@@ -144,10 +144,9 @@ _take_target(sol::DESolution, ::AbstractIndividual, target::Int) = _take_target(
 
 function _take_target(sol::DESolution, individual::MOIndividual, target::AbstractVector{Int}) 
     ŷs = _take_target(sol, target)
-    return map(getindex, ŷs, individual.dvid)
+    return map(getindex, ŷs, individual.dvid) # TODO: view?
 end
 
-# TODO: version that works with multiple dvs
 _take_target(sol::DESolution, target::Int) = Array(sol)[target, :]
 function _take_target(sol::DESolution, target::AbstractVector{Int}) 
     preds = Array(sol)

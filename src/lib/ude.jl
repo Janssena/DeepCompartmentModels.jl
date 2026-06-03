@@ -1,4 +1,5 @@
 abstract type AbstractUDEType end
+abstract type AbstractHybridUDEType <: AbstractUDEType end
 struct BasicUDE <: AbstractUDEType end
 struct TimeConcatUDE <: AbstractUDEType end
 
@@ -20,10 +21,11 @@ end
 
 _empty_de(u, p, t) = nothing
 
-function build_problem(ude::UniversalDiffEq{P}, model::Lux.AbstractLuxLayer, st::NamedTuple) where P<:SciMLBase.AbstractODEProblem
+# TODO: Make extendible so that we can use the solve and solve_for_target defined here in all cases
+function build_problem(ude::UniversalDiffEq{P}, model::Lux.AbstractLuxLayer, ps, st::NamedTuple) where P<:SciMLBase.AbstractODEProblem
     stateful = Lux.StatefulLuxLayer{true}(model, nothing, st.theta)
     dudt(u, p, t; model = stateful) = ude(model, u, p, t)
-    return remake(ude.problem, f = dudt)
+    return remake(ude.problem, f = dudt), ps
 end
 
 (::UniversalDiffEq{P,T})(model, u, p, t) where {P,T<:BasicUDE} = [p.I; zeros(eltype(u), length(u) - 1)] .+ model(u, p)
@@ -101,5 +103,5 @@ function Base.show(io::IO, mime::MIME"text/plain", ude::UniversalDiffEq)
     show(io, mime, ude.problem.u0)
 end
 
-Base.show(io::IO, dcm::DeepCompartmentModel{UniversalDiffEq{P,T},M,E,S}) where {P,T,M,E,S} = 
-    print(io, "DeepCompartmentModel{UniversalDiffEq($(nameof(P)), $(nameof(T))), $(dcm.error)}")
+Base.show(io::IO, dcm::DeepCompartmentModel{<:UniversalDiffEq{P,T},M,E,S}) where {P,T,M,E,S} = 
+    print(io, "DeepCompartmentModel{ude = UniversalDiffEq($(nameof(P)), $(nameof(T))), error = $(dcm.error)}")

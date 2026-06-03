@@ -1,5 +1,22 @@
 import ForwardDiff
 
+"""
+    gradient(objective, model, population, ps, st; parallel, batchsize)
+
+Compute the gradient of `objective` with respect to `ps` using Zygote.
+
+## Arguments
+- `objective`: Objective function.
+- `model`: A `DeepCompartmentModel`.
+- `population`: A `Population`.
+- `ps`: Model parameters.
+- `st`: Model state.
+
+## Keyword Arguments
+- `parallel=false`: Parallelism strategy. Options: `false` (sequential), `:individual`
+  (one thread per individual), `:batch` (one thread per mini-batch).
+- `batchsize=16`: Batch size when `parallel=:batch`.
+"""
 function gradient(objective::AbstractObjective, dcm::DeepCompartmentModel, population::Population, ps, st; parallel = false, batchsize::Int=16)
     if parallel == false
         return _gradient(objective, dcm, population, ps, st)

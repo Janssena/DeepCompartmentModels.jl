@@ -4,6 +4,40 @@
 
 default_callback(epoch, loss) = println("Epoch $epoch, loss = $loss")
 
+"""
+    fit(obj, model, data, opt; epochs, callback, kwargs...)
+    fit(obj, model, data, opt, ps, st; epochs, callback, kwargs...)
+    fit(obj, model, data, opt_state, ps, st; epochs, callback, kwargs...)
+
+Optimise `model` parameters by minimising `obj` on `data` using optimizer `opt`.
+
+When `ps` and `st` are not provided they are initialised via `setup`. When an
+`Optimisers.AbstractRule` is provided instead of an `opt_state`, the optimiser
+state is initialised from the rule and `ps`.
+
+## Arguments
+- `obj`: Objective function (e.g. `SSE()`, `LogLikelihood()`, `VariationalELBO(...)`).
+- `model`: An `AbstractModel` (e.g. `DCM`, `SNN`, `UniversalDiffEq`).
+- `data`: A `Population` or `AbstractIndividual`.
+- `opt`: An `Optimisers.AbstractRule` (e.g. `Adam(1e-3)`) or pre-built optimiser state.
+- `ps`: Model parameters returned by `setup`.
+- `st`: Model state returned by `setup`.
+
+## Keyword Arguments
+- `epochs=100`: Number of gradient descent steps.
+- `callback`: Called each epoch as `callback(epoch, loss)`. Defaults to printing.
+
+## Returns
+`(opt_state, ps, st)` — the final optimiser state, parameters, and model state.
+
+## Example
+```julia
+obj = SSE()
+model = DCM(two_comp!, ann)
+opt = Adam(1e-3)
+opt_state, ps, st = fit(obj, model, population, opt; epochs=500)
+```
+"""
 function fit(obj::AbstractObjective, model, data, opt::Optimisers.AbstractRule; kwargs...)
     ps, st = setup(obj, model)
     opt_state = Optimisers.setup(opt, ps)
