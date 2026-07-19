@@ -23,6 +23,10 @@ begin
         include("lib/objectives.test.jl")
     end
 
+    @testset "Error models" begin
+        include("lib/error_models.test.jl")
+    end
+
     @testset "Initializers" begin
         include("lib/initializers.test.jl")
     end
