@@ -10,6 +10,10 @@ include("lib/testutils.jl")
 @info "Starting tests..."
 
 begin
+    @testset "Public API" begin
+        include("lib/api.test.jl")
+    end
+
     # TODO: Test generate_dosing_callback before individuals
     @testset "Populations and Individuals" begin
         include("lib/population.test.jl")

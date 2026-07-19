@@ -59,7 +59,7 @@ include("lib/solve.jl");
 export  solve, solve_for_target, construct_p
 
 include("lib/random_effects.jl");
-export  get_random_effects, make_etas, sample_gaussian, update_epsilon!
+export  get_random_effects, sample_gaussian, update_epsilon!
 
 include("lib/objectives.jl");
 export  MSE, SSE, LogLikelihood, VariationalELBO, mse, sse, 
@@ -81,4 +81,10 @@ export  generate_dosing_callback
 include("lib/lux.helpers.jl");
 export  Normalize, AddGlobalParameters, Combine, SingleHeadedBranch, 
         MultiHeadedBranch, make_branch, interpret_branch
+
+# Intentionally dormant source files:
+# - lib/optimization.jl contains an obsolete fit pipeline and is not loaded.
+# - lib/node.jl, lib/low_dim_node.jl, and lib/auto_encoding_node.jl contain
+#   experimental NODE variants and are not loaded. UniversalDiffEq is the only
+#   NODE-family model currently in the public API.
 end
