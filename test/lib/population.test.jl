@@ -62,7 +62,7 @@ m = 3 # ode dim
     # Copying individual, without changing callback
     indv_basic_copy = copy(indv_basic)
     @test typeof(indv_basic) == typeof(indv_basic_copy)
-    for field in filter(Base.Fix2(!∈, [:id, :callback]), fieldnames(typeof(indv_basic)))
+    for field in filter(Base.Fix2(!∈, [:id, :callback, :occasions]), fieldnames(typeof(indv_basic)))
         @test getfield(indv_basic_copy, field) == getfield(indv_basic, field) && !(getfield(indv_basic_copy, field) === getfield(indv_basic, field))
     end
     
@@ -70,7 +70,7 @@ m = 3 # ode dim
     new_cb = DiscreteCallback(() -> nothing, () -> nothing)
     indv_basic_cb_copy = copy(indv_basic, new_cb)
     @test typeof(indv_basic) !== typeof(indv_basic_cb_copy)
-    for field in filter(Base.Fix2(!∈, [:id, :callback]), fieldnames(typeof(indv_basic)))
+    for field in filter(Base.Fix2(!∈, [:id, :callback, :occasions]), fieldnames(typeof(indv_basic)))
         @test getfield(indv_basic_cb_copy, field) == getfield(indv_basic, field) && !(getfield(indv_basic_cb_copy, field) === getfield(indv_basic, field))
     end
     @test typeof(indv_basic_cb_copy).parameters[end] == typeof(new_cb)
@@ -126,7 +126,7 @@ end
     # Copying individual, without changing callback
     indv_time_var_copy = copy(indv_time_var1)
     @test typeof(indv_time_var1) == typeof(indv_time_var_copy)
-    for field in filter(Base.Fix2(!∈, [:id, :callback]), fieldnames(typeof(indv_time_var1)))
+    for field in filter(Base.Fix2(!∈, [:id, :callback, :occasions]), fieldnames(typeof(indv_time_var1)))
         @test getfield(indv_time_var_copy, field) == getfield(indv_time_var1, field) && !(getfield(indv_time_var_copy, field) === getfield(indv_time_var1, field))
     end
     
@@ -134,7 +134,7 @@ end
     new_cb = DiscreteCallback(() -> nothing, () -> nothing)
     indv_time_var_cb_copy = copy(indv_time_var1, new_cb)
     @test typeof(indv_time_var1) !== typeof(indv_time_var_cb_copy)
-    for field in filter(Base.Fix2(!∈, [:id, :callback]), fieldnames(typeof(indv_time_var1)))
+    for field in filter(Base.Fix2(!∈, [:id, :callback, :occasions]), fieldnames(typeof(indv_time_var1)))
         @test getfield(indv_time_var_cb_copy, field) == getfield(indv_time_var1, field) && !(getfield(indv_time_var_cb_copy, field) === getfield(indv_time_var1, field))
     end
     @test typeof(indv_time_var_cb_copy).parameters[end] == typeof(new_cb)

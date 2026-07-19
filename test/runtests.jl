@@ -5,6 +5,7 @@ using DataFrames
 @info "Loading local DeepCompartmentModels package..."
 using DeepCompartmentModels
 println("Done!")
+include("lib/testutils.jl")
 
 @info "Starting tests..."
 
@@ -15,22 +16,22 @@ begin
     end
     
     @testset "Objectives" begin
-        include("objectives.test.jl")
+        include("lib/objectives.test.jl")
     end
 
     @testset "Initializers" begin
-        include("initializers.test.jl")
+        include("lib/initializers.test.jl")
     end
 
     @testset "Mixed effect estimation" begin
-        include("mixed_effects.test.jl")
+        include("lib/mixed_effects.test.jl")
     end
 
     @testset "Model" begin
-        include("model.test.jl")
+        include("lib/model.test.jl")
     end
 
     @testset "DCM" begin
-        include("dcm.test.jl")
+        include("lib/dcm.test.jl")
     end
 end

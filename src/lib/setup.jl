@@ -52,7 +52,7 @@ function setup(::FixedObjective, rng::Random.AbstractRNG, model::AbstractModel, 
     )
     if !(model.error isa ImplicitError)
         ps_error = setup(model.error, init_sigma)
-        merge(ps, (error = ps_error, ))
+        ps = merge(ps, (error = ps_error, ))
     end
     ps_params = _convert_parameters(params, ps)
     st = (theta = st_theta, )
