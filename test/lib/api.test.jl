@@ -22,8 +22,12 @@ const PACKAGE_API_GROUPS = (
                   :logjoint, :elbo),
     fitting_primitives = (:setup, :setup_phi, :gradient, :create_batches,
                           :take_batch, :residual_error_value_and_gradient,
-                          :m_step, :optimise_omega, :optimise_residual_error),
-    lux_helpers = (:Normalize, :AddGlobalParameters, :Combine,
+                          :m_step, :optimise_omega, :optimise_residual_error,
+                          :fit),
+    fit_results = (:FitResult, :isconverged, :niterations,
+                   :objective_history, :fit_status, :coef, :coefnames,
+                   :coefunits, :empirical_bayes),
+    lux_helpers = (:Normalize, :InitialScale, :AddGlobalParameters, :Combine,
                    :SingleHeadedBranch, :MultiHeadedBranch, :make_branch,
                    :interpret_branch),
 )
@@ -47,9 +51,12 @@ end
     @test :LowDimNODE ∉ public_names
     @test :AutoEncodingNODE ∉ public_names
 
-    # `fit` leaks into the namespace through a broad dependency re-export. The
-    # obsolete DCM implementation in lib/optimization.jl is not loaded.
+    # `fit` is the StatsAPI generic re-exported through Distributions. The
+    # package owns explicit fixed-effect and VariationalELBO methods.
     @test :fit in public_names
-    @test !any(method -> method.module === DeepCompartmentModels,
-               methods(DeepCompartmentModels.fit))
+    @test any(method -> method.module === DeepCompartmentModels,
+              methods(DeepCompartmentModels.fit))
+    @test applicable(
+        fit, VariationalELBO([1]), toy_dcm(; error = AdditiveError(0.1f0)),
+        toy_population(; n = 1), Optimisers.Adam())
 end

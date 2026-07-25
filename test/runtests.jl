@@ -2,6 +2,7 @@ import Core.Compiler: return_type, isconcretetype
 
 using Test
 using DataFrames
+using Serialization
 @info "Loading local DeepCompartmentModels package..."
 using DeepCompartmentModels
 println("Done!")
@@ -31,8 +32,16 @@ begin
         include("lib/initializers.test.jl")
     end
 
+    @testset "Structural parameters" begin
+        include("lib/structural.test.jl")
+    end
+
     @testset "Mixed effect estimation" begin
         include("lib/mixed_effects.test.jl")
+    end
+
+    @testset "Multi-output models" begin
+        include("lib/multi_output.test.jl")
     end
 
     @testset "Model" begin
@@ -45,5 +54,9 @@ begin
 
     @testset "Solving and dosing callbacks" begin
         include("lib/solve.test.jl")
+    end
+
+    @testset "Fit" begin
+        include("lib/fit.test.jl")
     end
 end

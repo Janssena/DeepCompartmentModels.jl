@@ -39,6 +39,49 @@ Base.show(io::IO, l::Normalize) = print(io, "Normalize(lower = $(l.lb), upper = 
 
 ################################################################################
 ##########                                                            ##########
+##########                     Initial scale layer                    ##########
+##########                                                            ##########
+################################################################################
+
+"""
+    InitialScale(init)
+
+Final encoder layer that multiplies the network output element-wise by the fixed
+initial parameter values `init`. Because a preceding `softplus` layer produces
+outputs of order one, this anchors the model's initial predictions near
+physiologically reasonable parameter values (e.g. `[5, 30, 1, 1]`), so the
+network only has to learn deviations around them — which greatly stabilises
+training. The scale factors are **not** learnable; they are fixed
+initialisation anchors.
+
+# Example
+
+```julia
+encoder = Lux.Chain(
+    Normalize([150., 100., 1., 180.]),
+    Lux.Dense(num_x, 12, Lux.swish),
+    Lux.Dense(12, 4, Lux.softplus),
+    InitialScale([5.0, 30.0, 1.0, 1.0]),   # [CL, V1, Q, V2]
+)
+```
+"""
+struct InitialScale{T<:AbstractVector} <: Lux.AbstractLuxLayer
+    init::T
+    InitialScale(init::AbstractVector) = new{typeof(Float32.(init))}(Float32.(init))
+end
+
+Lux.initialparameters(::Random.AbstractRNG, ::InitialScale) = NamedTuple()
+Lux.initialstates(::Random.AbstractRNG, l::InitialScale) = (scale = l.init,)
+Lux.parameterlength(::InitialScale) = 0
+Lux.statelength(l::InitialScale) = length(l.init)
+
+(l::InitialScale)(x::AbstractVector, ps, st::NamedTuple) = (st.scale .* x, st)
+(l::InitialScale)(x::AbstractMatrix, ps, st::NamedTuple) = (st.scale .* x, st)
+
+Base.show(io::IO, l::InitialScale) = print(io, "InitialScale(init = $(l.init))")
+
+################################################################################
+##########                                                            ##########
 ##########                 Add global parameter layer                 ##########
 ##########                                                            ##########
 ################################################################################
@@ -278,8 +321,8 @@ y = f(x) ./ f(anchor)
 - `anchor`: Unnormalized covariate value to which the output is "anchored", i.e. f(anchor) = 1.
 - `x`: Normalized dummy input to the branch. 
 """
-function interpret_branch(ann::Lux.AbstractLuxContainerLayer, ps, st, covariate_idx, anchor; x = 0:0.01:1) # TODO: set type of dummy_x
-    branch_layer = findall(layer -> typeof(layer) <: BranchLayer, ann.layers)
+function interpret_branch(ann::Lux.AbstractLuxLayer, ps, st, covariate_idx, anchor; x = 0:0.01:1) # TODO: set type of dummy_x
+    branch_layer = findall(layer -> typeof(layer) <: Lux.BranchLayer, ann.layers)
     if length(branch_layer) > 1
         throw(ErrorException("Multiple BranchLayers detected. The interpret_branch function only accepts model with a single BranchLayer"))
     end
