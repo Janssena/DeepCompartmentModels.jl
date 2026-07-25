@@ -27,6 +27,8 @@ const PACKAGE_API_GROUPS = (
     fit_results = (:FitResult, :isconverged, :niterations,
                    :objective_history, :fit_status, :coef, :coefnames,
                    :coefunits, :empirical_bayes),
+    uncertainty = (:uncertainty, :FixedEffectUncertainty, :MixedEffectUncertainty,
+                   :vcov, :stderror, :confint),
     lux_helpers = (:Normalize, :InitialScale, :AddGlobalParameters, :Combine,
                    :SingleHeadedBranch, :MultiHeadedBranch, :make_branch,
                    :interpret_branch),

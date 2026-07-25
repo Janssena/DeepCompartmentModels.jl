@@ -59,4 +59,8 @@ begin
     @testset "Fit" begin
         include("lib/fit.test.jl")
     end
+
+    @testset "Uncertainty" begin
+        include("lib/uncertainty.test.jl")
+    end
 end
