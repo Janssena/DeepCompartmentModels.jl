@@ -67,4 +67,8 @@ begin
     @testset "Diagnostics" begin
         include("lib/diagnostics.test.jl")
     end
+
+    @testset "Simulation" begin
+        include("lib/simulate.test.jl")
+    end
 end

@@ -30,6 +30,8 @@ const PACKAGE_API_GROUPS = (
     uncertainty = (:uncertainty, :FixedEffectUncertainty, :MixedEffectUncertainty,
                    :vcov, :stderror, :confint),
     diagnostics = (:prediction_record, :PredictionRecord),
+    simulation = (:simulate, :dose_regimen, :simulation_population,
+                  :parameter_draws, :vpc, :VPCSummary),
     lux_helpers = (:Normalize, :InitialScale, :AddGlobalParameters, :Combine,
                    :SingleHeadedBranch, :MultiHeadedBranch, :make_branch,
                    :interpret_branch),

@@ -99,6 +99,10 @@ export  uncertainty, FixedEffectUncertainty, MixedEffectUncertainty,
 include("lib/diagnostics.jl");
 export  prediction_record, PredictionRecord
 
+include("lib/simulate.jl");
+export  simulate, dose_regimen, simulation_population, parameter_draws,
+        vpc, VPCSummary
+
 include("lib/callbacks.jl");
 export  generate_dosing_callback
 
