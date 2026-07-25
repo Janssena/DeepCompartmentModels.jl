@@ -42,4 +42,8 @@ begin
     @testset "DCM" begin
         include("lib/dcm.test.jl")
     end
+
+    @testset "Solving and dosing callbacks" begin
+        include("lib/solve.test.jl")
+    end
 end

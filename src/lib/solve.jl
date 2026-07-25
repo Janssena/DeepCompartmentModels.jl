@@ -2,7 +2,8 @@ SciMLBase.solve(model::AbstractDEModel, individual::AbstractIndividual, z; kwarg
     SciMLBase.solve(model.problem, individual, z; kwargs...)
 
 """
-    solve(problem, individual, z; solver = Tsit5(), interpolate = false, saveat = get_t(individual), kwargs...)
+    solve(problem, individual, z; solver = Tsit5(), interpolate = false,
+          saveat = get_t(individual), dt = _safe_initial_dt(T), kwargs...)
 
 Extends the solve function from SciMLBase to simplify the solving of differential equations
 for the DeepCompartmentModels ecosystem.
@@ -14,6 +15,10 @@ for the DeepCompartmentModels ecosystem.
 - `solver = Tsit5()`: Solver to use.
 - `interpolate = false`: , 
 - `saveat = get_t(individual)`: time points at which to save the solution. Is forced to be empty when interpolate = true.
+- `dt = _safe_initial_dt(T)`: initial step proposal. For Float32 this avoids a
+  spurious machine-epsilon warning when the pre-dose state and derivative are
+  exactly zero. Pass `dt=nothing` to restore solver auto-initialisation or a
+  numeric value to override it.
 - `kwargs`: Additional keyword arguments that are passed to the solve call from DifferentialEquations.jl.
 """
 function SciMLBase.solve(
@@ -23,14 +28,15 @@ function SciMLBase.solve(
         solver = Tsit5(),
         interpolate::Bool = false, 
         saveat::AbstractVector{<:Real} = get_t(individual),
+        dt = _safe_initial_dt(T),
         kwargs...
     ) where {T,O<:Nothing}
     prob = _remake_prob(problem, individual, saveat, z)
     interpolate && _set_save_positions!(individual.callback, true)
+    solve_kwargs = isnothing(dt) ? (; kwargs...) : (; dt, kwargs...)
     sol = SciMLBase.solve(prob, solver;
-        saveat = interpolate ? empty(saveat) : saveat, callback = individual.callback, 
-        tstops = _get_tstops(individual.callback), kwargs...
-    )
+        saveat = interpolate ? empty(saveat) : saveat, callback = individual.callback,
+        tstops = _get_tstops(individual.callback), solve_kwargs...)
     interpolate && _set_save_positions!(individual.callback, false)
     return sol
 end
@@ -42,6 +48,7 @@ function SciMLBase.solve(
         solver = Tsit5(),
         interpolate::Bool = false, 
         saveat::AbstractVector{<:Real} = get_t(individual),
+        dt = _safe_initial_dt(T),
         kwargs...
     ) where {T,O<:AbstractVector{<:Pair}}
 
@@ -52,14 +59,22 @@ function SciMLBase.solve(
         tstops_occ = filter(Base.Fix2(_within_occ, occ), tstops)
         _problem = remake(problem, tspan = (occ.first - T(0.1), problem.tspan[2]))
         prob = _remake_prob(_problem, individual, saveat_occ, z)
+        solve_kwargs = isnothing(dt) ? (; kwargs...) : (; dt, kwargs...)
         return SciMLBase.solve(prob, solver;
             saveat = interpolate ? empty(saveat_occ) : saveat_occ, callback = individual.callback, 
-            tstops = tstops_occ, kwargs...
+            tstops = tstops_occ, solve_kwargs...
         )
     end
     interpolate && _set_save_positions!(individual.callback, false)
     return sols
 end
+
+# OrdinaryDiffEq's zero-derivative fallback is 1e-6. In Float32 that is below
+# its 10eps(T) diagnostic threshold, so an otherwise benign pre-dose equilibrium
+# emits `dt_epsilon`. A slightly larger initial proposal avoids that warning;
+# adaptive error control and event `tstops` still determine accepted steps.
+_safe_initial_dt(::Type{T}) where {T<:AbstractFloat} =
+    T(1e-6) < T(10) * eps(T) ? T(100) * eps(T) : nothing
 
 _within_occ(t::Real, occ::Pair) = t >= occ.first && t <= occ.second
 
@@ -135,14 +150,19 @@ end
 Specific version of the solve call that passes the sensealg to the solve call, only grabs the target 
 indices from prediction inside the `sol` object.
 """
-function solve_for_target(model::DeepCompartmentModel{P,M,E,T}, individual::AbstractIndividual, z::AbstractArray{<:Real}; sensealg = model.sensealg, kwargs...) where {P,M,E,T<:Int}
+function solve_for_target(model::DeepCompartmentModel{P,M,E,T}, individual::AbstractIndividual, z::AbstractArray{<:Real}; sensealg = model.sensealg, kwargs...) where {P,M,E,T}
     sol = solve(model.problem, individual, z; sensealg, kwargs...)
     return _take_target(sol, individual, model.target) # old
 end
 
 _take_target(sol::DESolution, ::AbstractIndividual, target::Int) = _take_target(sol, target)
 
+_take_target(::DESolution, ::MOIndividual, ::Int) = throw(DimensionMismatch(
+    "MOIndividual requires a vector target with one state index per dependent variable."))
+
 function _take_target(sol::DESolution, individual::MOIndividual, target::AbstractVector{Int}) 
+    length(target) == length(individual.ys) || throw(DimensionMismatch(
+        "The model target has $(length(target)) entries but the individual has $(length(individual.ys)) dependent variables."))
     ŷs = _take_target(sol, target)
     return map(getindex, ŷs, individual.dvid)
 end

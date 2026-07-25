@@ -165,7 +165,7 @@ Base.show(io::IO, ::CustomError) = print(io, "CustomError(...)")
 """
     ErrorModelSet
 
-Error model consisting of a set of AbstractErrorModels for multiple objectives. 
+Error model consisting of one `AbstractErrorModel` per dependent variable.
 
 # Arguments
 - `errors`: Tuple containing the different ErrorModels.
@@ -176,8 +176,17 @@ struct ErrorModelSet{E} <: AbstractErrorModel
         new{typeof(errors)}(errors)
 end
 
+function _check_error_model_set(error::ErrorModelSet, ŷs)
+    length(error.errors) == length(ŷs) || throw(DimensionMismatch(
+        "ErrorModelSet has $(length(error.errors)) models but predictions contain $(length(ŷs)) dependent variables."))
+    return nothing
+end
+
+_error_model_parameters(ps, j) = hasproperty(ps, :σ) ? (σ = ps.σ[j],) : take_batch(ps, j)
+
 var(error::ErrorModelSet, ŷs::AbstractVector{<:AbstractVector{<:Real}}, ps, st) = map(eachindex(ŷs)) do j
-    var(error.errors[j], ŷs[j], take_batch(ps, st, j)...)
+    _check_error_model_set(error, ŷs)
+    var(error.errors[j], ŷs[j], _error_model_parameters(ps, j), take_batch(st, j))
 end
 
 Base.show(io::IO, error::ErrorModelSet) = 
@@ -187,5 +196,9 @@ make_dist(error::ErrorModelSet, ŷs::AbstractVector{<:AbstractVector{<:Abstract
     make_dist(error, ŷᵢ, ps, st)
 end
 
-make_dist(error::ErrorModelSet, ŷs::AbstractVector{<:AbstractVector{<:Real}}, ps, st; kwargs...) = 
-    MvNormal.(ŷs, var(error, ŷs, ps, st; kwargs...))
+function make_dist(error::ErrorModelSet, ŷs::AbstractVector{<:AbstractVector{<:Real}}, ps, st; kwargs...)
+    _check_error_model_set(error, ŷs)
+    return map(eachindex(ŷs)) do j
+        make_dist(error.errors[j], ŷs[j], _error_model_parameters(ps, j), take_batch(st, j); kwargs...)
+    end
+end

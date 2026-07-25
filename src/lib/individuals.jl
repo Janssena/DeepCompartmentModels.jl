@@ -183,10 +183,10 @@ Individual(id::I, x, t, y, cb::C, ::Type{T}=Float32; kwargs...) where {T,I,C} =
 """
     MOIndividual{T,O,I,C}(...)
 
-Struct holding the data for a single subject for analyses with multiple objectives. 
+Struct holding data for one subject with multiple dependent variables (outputs).
 """
 
-struct MOIndividual{T,O<:Union{Bool,Vector{Pair{T,T}}},I<:Union{Integer, AbstractString},C} <: AbstractIndividual{T,O,I,C}
+struct MOIndividual{T,O<:Union{Nothing,Bool,Vector{Pair{T,T}}},I<:Union{Integer, AbstractString},C} <: AbstractIndividual{T,O,I,C}
     id::I
     x::@NamedTuple{zeta::Vector{T}, error::Vector{T}}
     t::Vector{T}
@@ -201,9 +201,16 @@ MOIndividual(id, x::AbstractVector, t, y, cb, ::Type{T}=Float32; kwargs...) wher
     MOIndividual(id, (zeta = x, error = empty(x)), t, y, cb, T; kwargs...)
 
 function MOIndividual(id::I, x::NamedTuple{(:zeta,:error)}, ts::AbstractVector{<:AbstractVector}, ys::AbstractVector{<:AbstractVector}, cb::C, ::Type{T}=Float32; occasions=nothing, u0::AbstractVector=empty(first(ys))) where {T,I,C}
+    isempty(ts) && throw(ArgumentError("A multi-output individual must contain at least one dependent variable."))
+    length(ts) == length(ys) || throw(ArgumentError(
+        "The number of time vectors ($(length(ts))) must match the number of observation vectors ($(length(ys)))."))
+    all(length.(ts) .== length.(ys)) || throw(ArgumentError(
+        "Each dependent variable must have one observation for every supplied time point."))
+    all(allunique, ts) || throw(ArgumentError(
+        "Observation times must be unique within each dependent variable."))
     DeepCompartmentModels._callback_type_matches(cb, T) # warn if callback does not match type.
     t = sort(unique(vcat(ts...)))
-    occasions = !isnothing(occasions) ? fmap(T, occasions) : occasions
+    occasions = isnothing(occasions) || occasions isa Bool ? occasions : fmap(T, occasions)
     return MOIndividual{T,typeof(occasions),I,C}(
         id, 
         fmap(Base.Fix1(convert, Vector{T}), x),

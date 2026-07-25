@@ -18,7 +18,11 @@ function setup(error::ErrorModelSet, ::Nothing)
 end
 
 setup(::AbstractErrorModel, init::AbstractVector{<:Real}) = (σ = invsoftplus.(init), )
-setup(::ErrorModelSet, inits::AbstractVector{<:AbstractVector{<:Real}}) = (σ = map(Base.Fix1(broadcast, invsoftplus), inits), )
+function setup(error::ErrorModelSet, inits::AbstractVector{<:AbstractVector{<:Real}})
+    length(error.errors) == length(inits) || throw(DimensionMismatch(
+        "ErrorModelSet has $(length(error.errors)) models but $(length(inits)) initial-value vectors were supplied."))
+    return (σ = map(Base.Fix1(broadcast, invsoftplus), inits), )
+end
 
 ##### Full setup
 setup(rng, dcm::DeepCompartmentModel{<:SciMLBase.AbstractDEProblem}) = 
@@ -84,9 +88,23 @@ function setup(
     obj::MixedObjective, rng::Random.AbstractRNG, model::AbstractModel, population::Population, ::Type{T}=Float32; 
     init_omega=0.1, init_sigma = nothing, params::Parameterisation=MeanSqrt(), kwargs...) where T
 
+    dynamic(obj.natural) && throw(ArgumentError(
+        "natural=true is not implemented and is intentionally disabled."))
+    isempty(obj.idxs) && throw(ArgumentError("At least one random-effect index is required."))
+    all(>(0), obj.idxs) || throw(ArgumentError("Random-effect indices must be positive."))
+    allunique(obj.idxs) || throw(ArgumentError("Random-effect indices must be unique."))
+    if init_omega isa AbstractVector
+        length(init_omega) == _num_random_effects(obj) || throw(DimensionMismatch(
+            "init_omega has length $(length(init_omega)); expected $(_num_random_effects(obj))."))
+        all(>(0), init_omega) || throw(ArgumentError("All initial omega variances must be positive."))
+    else
+        init_omega > 0 || throw(ArgumentError("The initial omega variance must be positive."))
+    end
+
     ps_theta, st_theta = setup(rng, model)
     Ω = Symmetric(collect(Diagonal(ones(_num_random_effects(obj)) .* init_omega)))
     num_params = _estimate_typ_parameter_size(model, population[1:1], (theta = ps_theta, ), (theta = st_theta, ))
+    maximum(obj.idxs) <= num_params || throw(BoundsError(1:num_params, maximum(obj.idxs)))
     ps_phi, st_phi = setup_phi(obj, rng, model, population, Ω; num_params, kwargs...)
 
     ps = (
@@ -117,7 +135,7 @@ function setup_phi(obj::VariationalELBO{MF}, rng::Random.AbstractRNG, ::Abstract
     end
 
     st = (
-        mask = indicator(num_params, obj.idxs),
+        mask = indicator(num_params, obj.idxs, eltype(Ω)),
         epsilon = [randn(rng, size(Ω, 1)) for _ in eachindex(population)],
     )
 

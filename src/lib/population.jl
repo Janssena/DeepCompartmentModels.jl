@@ -53,12 +53,13 @@ Population(::Type{T}, dims::Dims) where {T<:AbstractIndividual} =
 
 Base.IndexStyle(::Type{<:Population}) = IndexLinear()
 Base.size(pop::Population) = (pop.count, )
-Base.similar(::Population, ::Type{T}, dims::Dims) where {T} = Population(T, dims)
+Base.similar(::Population, ::Type{T}, dims::Dims) where {T<:AbstractIndividual} = Population(T, dims)
+Base.similar(::Population, ::Type{T}, dims::Dims) where {T} = Array{T}(undef, dims)
 Base.getindex(pop::Population, idx::Int) = getindex(pop.data, idx) # No default
 Base.setindex!(pop::Population{T}, v::T, idx::Int) where {T} = (pop.data[idx] = v)
 Base.showarg(io::IO, ::Population{T}, toplevel) where T = print(io, "Population{$(nameof(T)){$(T.parameters[1])}}")
 
-function get_x(pop::Population{T}, key::Symbol=:zeta) where T<:BasicIndividual
+function get_x(pop::Population{T}, key::Symbol=:zeta) where T<:Union{BasicIndividual,MOIndividual}
     x = zeros(first(T.parameters), length(get_x(pop[1], key)), pop.count)
     for i in eachindex(pop)
         x[:, i] .= get_x(pop[i], key)

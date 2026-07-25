@@ -3,8 +3,19 @@ import Distributions: loglikelihood, kldivergence
 abstract type AbstractObjective end
 abstract type FixedObjective <: AbstractObjective end
 
+"""
+    model_prior(model, ps, st)
+
+Negative log-prior contributed by the model's own parameters, added to the
+fixed-effect objective to form a MAP/log-joint. Defaults to `0` (no
+regularisation); a model that carries an internal prior over its parameters can
+specialise this to have that prior included in every objective. Integer `0`
+preserves the objective's element type for models without such a prior.
+"""
+model_prior(::Any, ps, st) = 0
+
 struct MSE <: FixedObjective end
-(::MSE)(dcm, data, ps, st) = mse(dcm, data, ps, st)
+(::MSE)(dcm, data, ps, st) = mse(dcm, data, ps, st) + model_prior(dcm, ps, st)
 
 """
     mse(dcm, data, ps, st)
@@ -34,10 +45,16 @@ function mse(model::AbstractDEModel, data::D, z::AbstractArray; kwargs...) where
     return _mse(get_y(data), ŷ)
 end
 
-_mse(y, ŷ) = mean(map(mean ∘ Base.Fix1(broadcast, abs2), y - ŷ))
+_squared_error(y::Real, ŷ::Real) = abs2(y - ŷ)
+_squared_error(y::AbstractVector, ŷ::AbstractVector) =
+    sum(map(_squared_error, y, ŷ))
+_observation_count(y::Real) = 1
+_observation_count(y::AbstractVector) = sum(_observation_count, y)
+
+_mse(y, ŷ) = _squared_error(y, ŷ) / _observation_count(y)
 
 struct SSE <: FixedObjective end
-(::SSE)(dcm, data, ps, st) = sse(dcm, data, ps, st)
+(::SSE)(dcm, data, ps, st) = sse(dcm, data, ps, st) + model_prior(dcm, ps, st)
 
 """
     sse(dcm, data, ps, st)
@@ -67,11 +84,11 @@ function sse(model::AbstractDEModel, data::D, z::AbstractArray; kwargs...) where
     return _sse(get_y(data), ŷ)
 end
 
-_sse(y, ŷ) = sum(map(sum ∘ Base.Fix1(broadcast, abs2), y - ŷ))
+_sse(y, ŷ) = _squared_error(y, ŷ)
 
 
 struct LogLikelihood <: FixedObjective end
-(::LogLikelihood)(dcm, data, ps, st) = -loglikelihood(dcm, data, ps, st)
+(::LogLikelihood)(dcm, data, ps, st) = -loglikelihood(dcm, data, ps, st) + model_prior(dcm, ps, st)
 
 abstract type MixedObjective <: AbstractObjective end
 
@@ -109,10 +126,11 @@ end
 VariationalELBO(idxs::AbstractVector{Int}; mean_field = false, path_deriv = true, natural = false) = 
     VariationalELBO(idxs, static(mean_field), static(path_deriv), static(natural))
 
-(::VariationalELBO{<:StaticBool,<:StaticBool,<:False})(dcm, data, ps, st) = -elbo(dcm, data, ps, st)
+(::VariationalELBO{<:StaticBool,<:StaticBool,<:False})(dcm, data, ps, st) =
+    -elbo(dcm, data, ps, st) + model_prior(dcm, ps, st)
 
-(::VariationalELBO{<:StaticBool,<:StaticBool,<:True})(dcm, data, ps, st) = 
-    -loglikelihood(dcm, data, ps, st) + kldivergence(dcm, ps, st)
+(::VariationalELBO{<:StaticBool,<:StaticBool,<:True})(dcm, data, ps, st) =
+    -loglikelihood(dcm, data, ps, st) + kldivergence(dcm, ps, st) + model_prior(dcm, ps, st)
 
 Base.show(io::IO, obj::VariationalELBO{MF,PD,N}) where {MF,PD,N} =
     print(io, "VariationalELBO{mean_field = $(dynamic(MF())), path_deriv = $(dynamic(PD())), natural = $(dynamic(N()))}(idxs = $(obj.idxs))")
@@ -212,8 +230,11 @@ end
 _logpdf(dists::AbstractVector{<:AbstractVector{<:Distribution}}, x::AbstractVector{<:AbstractVector{<:AbstractVector{<:Real}}}) = 
     sum(map(_logpdf, dists, x))
 
-_logpdf(dists::AbstractVector{<:Distribution}, x::AbstractVector{<:AbstractVector{<:Real}}) = 
-    sum(logpdf.(dists, x))
+# Dependent variables with no observations for this subject (e.g. an MOIndividual measured in
+# only one matrix) are skipped: logpdf of an empty distribution is type-unstable under AD
+# (empty reduction -> zero(Any)). With every output present this reduces to the original sum.
+_logpdf(dists::AbstractVector{<:Distribution}, x::AbstractVector{<:AbstractVector{<:Real}}) =
+    sum(logpdf(dists[j], x[j]) for j in eachindex(x) if !isempty(x[j]))
 
 _logpdf(dist::Distribution, x::AbstractVector{<:AbstractVector{<:Real}}) = 
     sum(map(Base.Fix1(logpdf, dist), x))

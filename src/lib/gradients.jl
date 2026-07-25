@@ -142,13 +142,23 @@ _isleaf_or_vec_of_arrays(::KeyPath, x) = _isleaf_or_vec_of_arrays(x)
 _isleaf_or_vec_of_arrays(x) = Functors.isleaf(x)
 _isleaf_or_vec_of_arrays(x::AbstractVector{<:AbstractArray{<:Real}}) = true
 
-function residual_error_value_and_gradient(rng::Random.AbstractRNG, dcm::DeepCompartmentModel{P,M}, data, ps, st; mode::Symbol = :forward, num_samples::Int = 100) where {P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer}
-    ∇ = NamedTuple{keys(ps)}(fill(nothing, length(keys(ps))))
+function _residual_error_predictions(rng, dcm, data, ps, st, num_samples)
     st_local = deepcopy(st)
-    predictions = map(1:num_samples) do _
+    return map(1:num_samples) do _
         update_epsilon!(rng, st_local)
         predict(dcm, data, ps, st_local)
     end
+end
+
+function residual_error_value_and_gradient(rng::Random.AbstractRNG, dcm::DeepCompartmentModel{P,M}, data, ps, st; mode::Symbol = :forward, num_samples::Int = 100, predictions=nothing) where {P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer}
+    num_samples > 0 || throw(ArgumentError("num_samples must be positive."))
+    mode in (:forward, :reverse) || throw(ArgumentError(
+        "mode must be :forward or :reverse, got $(repr(mode))."))
+    ∇ = NamedTuple{keys(ps)}(fill(nothing, length(keys(ps))))
+    predictions = predictions === nothing ?
+        _residual_error_predictions(rng, dcm, data, ps, st, num_samples) : predictions
+    length(predictions) == num_samples || throw(DimensionMismatch(
+        "Received $(length(predictions)) prediction draws but num_samples=$num_samples."))
     
     if mode == :forward
         error = ComponentVector(ps.error)
@@ -160,11 +170,13 @@ function residual_error_value_and_gradient(rng::Random.AbstractRNG, dcm::DeepCom
 
     res = eltype(error)[]
     _grad = ad.gradient(error) do p
-        lls = map(predictions) do ŷ
+        sample_loglikelihoods = map(predictions) do ŷ
             dist = make_dist(dcm.error, ŷ, p)
-            logpdf.(dist, get_y(data))
+            _logpdf(dist, get_y(data))
         end
-        loss = -sum(logsumexp.(lls) .- log(num_samples))
+        # The VEM M-step maximises E_q[log p(y | eta, theta, sigma)].  This is
+        # a mean of complete-data log likelihoods, not log(mean(likelihood)).
+        loss = -mean(sample_loglikelihoods)
         push!(res, loss isa ForwardDiff.Dual ? loss.value : loss)
         return loss
     end
