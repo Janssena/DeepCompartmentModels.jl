@@ -42,8 +42,14 @@ export  AbstractIndividual, BasicIndividual, TimeVariableIndividual, MOIndividua
         Individual, Population, get_x, get_t, get_tx, get_y, load
 
 include("lib/error.jl");
-export  AbstractErrorModel, AdditiveError, ProportionalError, CombinedError, 
+export  AbstractErrorModel, AdditiveError, ProportionalError, CombinedError,
         CustomError, ErrorModelSet, make_dist, var
+
+include("lib/structural.jl");
+export  AbstractParameterTransform, IdentityTransform, LogTransform,
+        LogitTransform, StructuralParameter, StructuralParameters,
+        parameter_names, parameter_units, parameter_transforms, parameter_bounds,
+        natural_parameters, unconstrained_parameters
 
 include("lib/dcm.jl");
 export  DeepCompartmentModel, DCM, predict_typ_parameters, predict_de_parameters, 
