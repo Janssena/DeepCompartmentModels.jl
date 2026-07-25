@@ -32,6 +32,7 @@ const PACKAGE_API_GROUPS = (
     diagnostics = (:prediction_record, :PredictionRecord),
     simulation = (:simulate, :dose_regimen, :simulation_population,
                   :parameter_draws, :vpc, :VPCSummary),
+    hybrid_ude = (:HybridModel, :CustomUDE, :AbstractHybridUDEType, :interpret_node),
     lux_helpers = (:Normalize, :InitialScale, :AddGlobalParameters, :Combine,
                    :SingleHeadedBranch, :MultiHeadedBranch, :make_branch,
                    :interpret_branch),

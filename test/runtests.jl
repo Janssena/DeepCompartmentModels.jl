@@ -71,4 +71,20 @@ begin
     @testset "Simulation" begin
         include("lib/simulate.test.jl")
     end
+
+    @testset "Mixed-effect workflow" begin
+        include("lib/mixed_workflow.test.jl")
+    end
+
+    @testset "UniversalDiffEq audit" begin
+        include("lib/ude.test.jl")
+    end
+
+    @testset "Covariate encoder" begin
+        include("lib/covariate_encoder.test.jl")
+    end
+
+    @testset "Hybrid NeuralODE" begin
+        include("lib/hybrid_ude.test.jl")
+    end
 end

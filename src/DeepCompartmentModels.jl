@@ -103,6 +103,9 @@ include("lib/simulate.jl");
 export  simulate, dose_regimen, simulation_population, parameter_draws,
         vpc, VPCSummary
 
+include("lib/hybrid_ude.jl");
+export  HybridModel, CustomUDE, AbstractHybridUDEType, interpret_node
+
 include("lib/callbacks.jl");
 export  generate_dosing_callback
 
