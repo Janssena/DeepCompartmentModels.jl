@@ -96,6 +96,9 @@ include("lib/uncertainty.jl");
 export  uncertainty, FixedEffectUncertainty, MixedEffectUncertainty,
         vcov, stderror, confint
 
+include("lib/diagnostics.jl");
+export  prediction_record, PredictionRecord
+
 include("lib/callbacks.jl");
 export  generate_dosing_callback
 

@@ -29,6 +29,7 @@ const PACKAGE_API_GROUPS = (
                    :coefunits, :empirical_bayes),
     uncertainty = (:uncertainty, :FixedEffectUncertainty, :MixedEffectUncertainty,
                    :vcov, :stderror, :confint),
+    diagnostics = (:prediction_record, :PredictionRecord),
     lux_helpers = (:Normalize, :InitialScale, :AddGlobalParameters, :Combine,
                    :SingleHeadedBranch, :MultiHeadedBranch, :make_branch,
                    :interpret_branch),

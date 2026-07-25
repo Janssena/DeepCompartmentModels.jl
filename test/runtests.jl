@@ -63,4 +63,8 @@ begin
     @testset "Uncertainty" begin
         include("lib/uncertainty.test.jl")
     end
+
+    @testset "Diagnostics" begin
+        include("lib/diagnostics.test.jl")
+    end
 end
