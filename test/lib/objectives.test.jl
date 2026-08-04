@@ -1,4 +1,3 @@
-using DistributionsAD
 using LinearAlgebra
 
 @testset "_logpdf for objectives" begin

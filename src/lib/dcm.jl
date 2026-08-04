@@ -98,9 +98,6 @@ Base.show(io::IO, dcm::DeepCompartmentModel{<:SciMLBase.AbstractDEProblem}) =
 Base.show(io::IO, dcm::DeepCompartmentModel{<:ODEProblem}) = 
     print(io, "DeepCompartmentModel{ode = $(dcm.problem.f.f), error = $(dcm.error)}")
 
-Base.show(io::IO, dcm::DeepCompartmentModel{<:UniversalDiffEq}) = 
-    print(io, "DeepCompartmentModel{ude = $(dcm.problem.type), error = $(dcm.error)}")
-
 ################################################################################
 ##########                        Model API                           ##########
 ################################################################################

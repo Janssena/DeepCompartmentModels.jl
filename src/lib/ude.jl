@@ -103,5 +103,5 @@ function Base.show(io::IO, mime::MIME"text/plain", ude::UniversalDiffEq)
     show(io, mime, ude.problem.u0)
 end
 
-Base.show(io::IO, dcm::DeepCompartmentModel{<:UniversalDiffEq{P,T},M,E,S}) where {P,T,M,E,S} = 
-    print(io, "DeepCompartmentModel{ude = UniversalDiffEq($(nameof(P)), $(nameof(T))), error = $(dcm.error)}")
+Base.show(io::IO, dcm::DeepCompartmentModel{<:UniversalDiffEq}) = 
+    print(io, "DeepCompartmentModel{ude = $(dcm.problem.type), error = $(dcm.error)}")

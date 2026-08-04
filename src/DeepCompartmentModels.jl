@@ -20,7 +20,6 @@ using Reexport
 @reexport using Static
 @reexport using Distributions
 @reexport using OrdinaryDiffEq
-@reexport using DistributionsAD
 @reexport using SciMLSensitivity
 
 import Zygote.ChainRules: @non_differentiable, @ignore_derivatives, ignore_derivatives
