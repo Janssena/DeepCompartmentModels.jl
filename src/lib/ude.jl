@@ -6,20 +6,16 @@ struct TimeConcatUDE <: AbstractUDEType end
 struct UniversalDiffEq{P<:SciMLBase.AbstractDEProblem,T<:AbstractUDEType} <: SciMLBase.AbstractDEProblem
     problem::P
     type::T
-    function UniversalDiffEq(problem::P, type::T = BasicUDE()) where {P,T} 
-        if isinplace(problem)
-            throw(ErrorException("UniversalDiffEq does not work with in-place DEProblems. Define your DE function using out-of-place functionality."))
-        end
-        return new{P,T}(problem, type)
-    end
+    UniversalDiffEq(problem::P, type::T = BasicUDE()) where {P,T} = 
+        new{P,T}(problem, type)
 end
 
-function UniversalDiffEq(num_partials::Int, ::Type{T1}=Float32; type::T = BasicUDE()) where {T1,T} 
-    problem = ODEProblem{false}(_empty_de, zeros(T1, num_partials), (-T1(0.1), one(T1)))
+function UniversalDiffEq(num_partials::Int, ::Type{TU}=Float32; inplace::Bool=false, type::T = BasicUDE()) where {TU,T} 
+    problem = ODEProblem{inplace}(_empty_de, zeros(TU, num_partials), (-TU(0.1), one(TU)))
     return UniversalDiffEq(problem, type)
 end
 
-_empty_de(u, p, t) = nothing
+_empty_de(args...; kwargs...) = nothing
 
 # TODO: Make extendible so that we can use the solve and solve_for_target defined here in all cases
 function build_problem(ude::UniversalDiffEq{P}, model::Lux.AbstractLuxLayer, ps, st::NamedTuple) where P<:SciMLBase.AbstractODEProblem
