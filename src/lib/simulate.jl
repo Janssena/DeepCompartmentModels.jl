@@ -1,19 +1,3 @@
-# Gate 8B — forward simulation (deterministic + residual + between-subject).
-#
-# Compose a *design* (covariates + dosing regimen + sampling times) with a model
-# and parameters, and get back a `Population` — the same structure `fit`/`load`
-# consume, so a simulated dataset round-trips into another fit, a diagnostic, or
-# a plot. Covers the Gate-5-independent sources of variability: the
-# fitted/specified typical parameters, an explicitly specified between-subject
-# random-effect distribution (`omega`/`random_effects`), and the residual-error
-# distribution. Single-output and multi-output (asynchronous per-DV sampling)
-# designs are both supported.
-#
-# Deliberately deferred to later 8B slices (recorded in REBUILD.md):
-#   * parameter-uncertainty propagation (simulate over draws from the qualified
-#     Gate 7A covariance or bootstrap refits);
-#   * reading a VEM-fitted Ω directly (inherits Gate 5's open qualification);
-#   * a multi-output design builder and packaged VPC summary helpers.
 
 """
     dose_regimen(; amount, n_doses=1, interval=24.0, start=0.0, infusion_duration=nothing)
@@ -31,18 +15,18 @@ dose_regimen(amount=500, infusion_duration=1.0)       # 500 mg over 1 h, infusio
 ```
 """
 function dose_regimen(; amount::Real, n_doses::Integer=1, interval::Real=24.0,
-                      start::Real=0.0, infusion_duration::Union{Nothing,Real}=nothing)
+    start::Real=0.0, infusion_duration::Union{Nothing,Real}=nothing)
     n_doses >= 1 || throw(ArgumentError("n_doses must be at least 1."))
     amount > 0 || throw(ArgumentError("amount must be positive."))
     (n_doses == 1 || interval > 0) || throw(ArgumentError(
         "interval must be positive for repeated dosing."))
-    times = float(start) .+ float(interval) .* (0:(n_doses - 1))
+    times = float(start) .+ float(interval) .* (0:(n_doses-1))
     amounts = fill(float(amount), n_doses)
     infusion_duration === nothing && return hcat(collect(times), amounts)
     infusion_duration > 0 || throw(ArgumentError("infusion_duration must be positive."))
     rate = amount / infusion_duration
     return hcat(collect(times), amounts, fill(float(rate), n_doses),
-                fill(float(infusion_duration), n_doses))
+        fill(float(infusion_duration), n_doses))
 end
 
 """
@@ -68,13 +52,13 @@ which uses each subject's own design.
 function simulation_population(covariates; regimen, obs_times, T::Type=Float64)
     isempty(covariates) && throw(ArgumentError("covariates must be non-empty."))
     multi_output = obs_times isa Tuple ||
-        (obs_times isa AbstractVector && !isempty(obs_times) && first(obs_times) isa Tuple)
+                   (obs_times isa AbstractVector && !isempty(obs_times) && first(obs_times) isa Tuple)
     multi_output && return _mo_simulation_population(covariates, regimen, obs_times, T)
 
     get_regimen = regimen isa Function ? regimen : (_ -> regimen)
     n = length(covariates)
     per_subject = obs_times isa AbstractVector &&
-        eltype(obs_times) <: Union{AbstractVector,AbstractRange,Tuple}
+                  eltype(obs_times) <: Union{AbstractVector,AbstractRange,Tuple}
     per_subject && length(obs_times) != n && throw(ArgumentError(
         "per-subject obs_times has $(length(obs_times)) schedules but there " *
         "are $n subjects."))
@@ -110,14 +94,14 @@ end
 # Reconstruct an individual with simulated observations, preserving its design.
 _set_observations(individual::BasicIndividual{T}, y) where {T} =
     BasicIndividual(individual.id, individual.x, individual.t, T.(y),
-                    individual.callback, T; u0=individual.u0,
-                    occasions=individual.occasions)
+        individual.callback, T; u0=individual.u0,
+        occasions=individual.occasions)
 
 _set_observations(individual::MOIndividual{T}, ys) where {T} =
     MOIndividual(individual.id, individual.x,
-                 [individual.t[mask] for mask in individual.dvid],
-                 [T.(y) for y in ys], individual.callback, T;
-                 u0=individual.u0, occasions=individual.occasions)
+        [individual.t[mask] for mask in individual.dvid],
+        [T.(y) for y in ys], individual.callback, T;
+        u0=individual.u0, occasions=individual.occasions)
 
 _set_observations(individual::AbstractIndividual, _) = throw(ArgumentError(
     "simulate currently supports BasicIndividual and MOIndividual designs; " *
@@ -216,10 +200,10 @@ is refused. Parameter-uncertainty propagation remains a later slice.
   `(abstol=1e-12, reltol=1e-10)`.
 """
 function simulate(model::AbstractDEModel, ps::NamedTuple, st, design::Population;
-                  rng::Random.AbstractRNG=Random.default_rng(), seed=nothing,
-                  residual::Bool=true, n::Integer=1,
-                  omega=nothing, random_effects=nothing,
-                  solve_kwargs::NamedTuple=NamedTuple())
+    rng::Random.AbstractRNG=Random.default_rng(), seed=nothing,
+    residual::Bool=true, n::Integer=1,
+    omega=nothing, random_effects=nothing,
+    solve_kwargs::NamedTuple=NamedTuple())
     (:omega in keys(ps) || :phi in keys(ps)) && throw(ArgumentError(
         "simulate does not read a VEM-fitted Ω; pass fixed-effect parameters " *
         "(theta[, error]) and specify between-subject variability explicitly with " *
@@ -245,10 +229,10 @@ a one-time warning is emitted. This enables a VPC from a mixed-effect fit while
 keeping the assumption explicit.
 """
 function simulate(result::FitResult, design::Population=result.data;
-                  omega=nothing, random_effects=nothing, kwargs...)
+    omega=nothing, random_effects=nothing, kwargs...)
     if result.metadata.effects === :fixed
         return simulate(result.model, result.ps, result.st, design;
-                        omega, random_effects, kwargs...)
+            omega, random_effects, kwargs...)
     end
     om = omega === nothing ? Matrix(result.ps.omega) : omega
     indices = random_effects === nothing ? collect(Int, result.objective.idxs) : random_effects
@@ -256,9 +240,9 @@ function simulate(result::FitResult, design::Population=result.data;
         "Simulating between-subject variability from a VEM-fitted Ω, which is " *
         "provisional and not qualified (Gate 5). Pass `omega` explicitly to " *
         "override.", maxlog=1)
-    fixed_ps = (theta = result.ps.theta, error = result.ps.error)
+    fixed_ps = (theta=result.ps.theta, error=result.ps.error)
     return simulate(result.model, fixed_ps, result.st, design;
-                    omega=om, random_effects=indices, kwargs...)
+        omega=om, random_effects=indices, kwargs...)
 end
 
 """
@@ -273,8 +257,8 @@ parameter tree `(theta=(unconstrained=…,), error=(σ=…,))`. Sampling on the
 unconstrained scale keeps every draw inside each parameter's declared domain.
 """
 function parameter_draws(u::FixedEffectUncertainty, n::Integer;
-                         rng::Random.AbstractRNG=Random.default_rng(),
-                         parameter_type::Type{<:AbstractFloat}=Float64)
+    rng::Random.AbstractRNG=Random.default_rng(),
+    parameter_type::Type{<:AbstractFloat}=Float64)
     n >= 1 || throw(ArgumentError("n must be at least 1."))
     distribution = MvNormal(u.unconstrained, Symmetric(u.vcov_unconstrained))
     structural = u.kinds .== :structural
@@ -282,7 +266,7 @@ function parameter_draws(u::FixedEffectUncertainty, n::Integer;
     return map(1:n) do _
         draw = rand(rng, distribution)
         (theta=(unconstrained=parameter_type.(draw[structural]),),
-         error=(σ=parameter_type.(draw[residual]),))
+            error=(σ=parameter_type.(draw[residual]),))
     end
 end
 
@@ -296,10 +280,10 @@ and `random_effects` behave as in the single-parameter method and apply to every
 draw.
 """
 function simulate(model::AbstractDEModel, ps_draws::AbstractVector{<:NamedTuple}, st,
-                  design::Population; rng::Random.AbstractRNG=Random.default_rng(),
-                  seed=nothing, residual::Bool=true,
-                  omega=nothing, random_effects=nothing,
-                  solve_kwargs::NamedTuple=NamedTuple())
+    design::Population; rng::Random.AbstractRNG=Random.default_rng(),
+    seed=nothing, residual::Bool=true,
+    omega=nothing, random_effects=nothing,
+    solve_kwargs::NamedTuple=NamedTuple())
     isempty(ps_draws) && throw(ArgumentError("ps_draws must be non-empty."))
     isempty(design) && throw(ArgumentError("design population must be non-empty."))
     seed === nothing || Random.seed!(rng, seed)
@@ -331,13 +315,13 @@ end
 
 function Base.show(io::IO, summary::VPCSummary)
     print(io, "VPCSummary($(length(summary.bin_centers)) bins; ",
-          "levels=$(summary.levels); ",
-          summary.observed === nothing ? "simulated only)" : "with observed)")
+        "levels=$(summary.levels); ",
+        summary.observed === nothing ? "simulated only)" : "with observed)")
 end
 
 _vpc_pairs(population::Population{<:BasicIndividual}) =
     (reduce(vcat, [Float64.(get_t(i)) for i in population]),
-     reduce(vcat, [Float64.(get_y(i)) for i in population]))
+        reduce(vcat, [Float64.(get_y(i)) for i in population]))
 _vpc_pairs(::Population) = throw(ArgumentError(
     "vpc currently supports single-output (BasicIndividual) populations."))
 
@@ -346,7 +330,7 @@ function _vpc_quantiles(times, values, edges, levels)
     quantiles = fill(NaN, n_bins, length(levels))
     counts = zeros(Int, n_bins)
     for b in 1:n_bins
-        upper = b == n_bins ? (v -> v <= edges[b + 1]) : (v -> v < edges[b + 1])
+        upper = b == n_bins ? (v -> v <= edges[b+1]) : (v -> v < edges[b+1])
         inside = findall(v -> v >= edges[b] && upper(v), times)
         counts[b] = length(inside)
         isempty(inside) && continue
@@ -369,9 +353,9 @@ count edges from the pooled simulated times) or an explicit vector of edges.
 Returns a [`VPCSummary`](@ref); plotting is left to the caller.
 """
 function vpc(simulations::AbstractVector{<:Population};
-             observed::Union{Nothing,Population}=nothing,
-             bins::Union{Integer,AbstractVector{<:Real}}=8,
-             levels=(0.05, 0.5, 0.95))
+    observed::Union{Nothing,Population}=nothing,
+    bins::Union{Integer,AbstractVector{<:Real}}=8,
+    levels=(0.05, 0.5, 0.95))
     isempty(simulations) && throw(ArgumentError("simulations must be non-empty."))
     level_vector = collect(Float64, levels)
     times = reduce(vcat, [first(_vpc_pairs(pop)) for pop in simulations])
@@ -380,14 +364,15 @@ function vpc(simulations::AbstractVector{<:Population};
     if bins isa Integer
         bins >= 1 || throw(ArgumentError("bins must be at least 1."))
         edges = collect(quantile(times, range(0, 1; length=bins + 1)))
-        edges[1] = minimum(times); edges[end] = maximum(times)
+        edges[1] = minimum(times);
+        edges[end] = maximum(times)
         unique!(edges)
     else
         edges = collect(Float64, bins)
         issorted(edges) && length(edges) >= 2 || throw(ArgumentError(
             "explicit bin edges must be sorted with at least two entries."))
     end
-    centers = (edges[1:(end - 1)] .+ edges[2:end]) ./ 2
+    centers = (edges[1:(end-1)] .+ edges[2:end]) ./ 2
 
     simulated, n_simulated = _vpc_quantiles(times, values, edges, level_vector)
     observed_quantiles = nothing
@@ -397,5 +382,5 @@ function vpc(simulations::AbstractVector{<:Population};
         observed_quantiles, n_observed = _vpc_quantiles(obs_times, obs_values, edges, level_vector)
     end
     return VPCSummary(edges, centers, level_vector, simulated, observed_quantiles,
-                      n_simulated, n_observed)
+        n_simulated, n_observed)
 end

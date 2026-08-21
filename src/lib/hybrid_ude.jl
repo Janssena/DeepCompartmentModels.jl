@@ -1,13 +1,3 @@
-# Gate 9B — mechanistic hybrid NeuralODE.
-#
-# A `HybridModel` couples a covariate `encoder` (covariates → baseline latent PK
-# parameters) with a NeuralODE `node` that learns one unknown dynamic term. The
-# user hand-writes the differential equation for a `CustomUDE(:name)` by adding a
-# method dispatched on that name, mixing the known mechanistic skeleton with the
-# learned term. This is the interpretable / semi-mechanistic end of the neural
-# spectrum, and (unlike the base `UniversalDiffEq`) it provides a working
-# user-facing `predict`. Adapted from the PAGE-workshop `hybrid-ude.jl`.
-
 abstract type AbstractHybridUDEType <: AbstractUDEType end
 
 """
@@ -43,17 +33,17 @@ setup(rng::Random.AbstractRNG, dcm::DeepCompartmentModel{<:UniversalDiffEq,<:Hyb
     Lux.setup(rng, dcm.model)
 
 Lux.initialparameters(rng::Random.AbstractRNG, m::HybridModel) = (
-    encoder = Lux.initialparameters(rng, m.encoder),
-    dynamics = ComponentVector(
-        latents = zeros(Float32, m.num_latent),
-        node = Lux.initialparameters(rng, m.node),
-        I = zero(Float32),
+    encoder=Lux.initialparameters(rng, m.encoder),
+    dynamics=ComponentVector(
+        latents=zeros(Float32, m.num_latent),
+        node=Lux.initialparameters(rng, m.node),
+        I=zero(Float32),
     ),
 )
 
 Lux.initialstates(rng::Random.AbstractRNG, m::HybridModel) = (
-    encoder = Lux.initialstates(rng, m.encoder),
-    dynamics = (latents = NamedTuple(), node = Lux.initialstates(rng, m.node)),
+    encoder=Lux.initialstates(rng, m.encoder),
+    dynamics=(latents=NamedTuple(), node=Lux.initialstates(rng, m.node)),
 )
 
 # Baseline latents, with (mixed) or without (fixed) multiplicative random effects.
@@ -77,13 +67,13 @@ function SciMLBase.solve(
         [z; ps.theta.dynamics.node; zero(ps.theta.dynamics.I)],
         getaxes(ps.theta.dynamics))
     prob = build_problem(dcm.problem, dcm.model, st)
-    return solve(prob, individual, ps_dynamic; sensealg = dcm.sensealg, kwargs...)
+    return solve(prob, individual, ps_dynamic; sensealg=dcm.sensealg, kwargs...)
 end
 
 function build_problem(ude::UniversalDiffEq{P}, model::HybridModel, st::NamedTuple) where {P<:SciMLBase.AbstractODEProblem}
     stateful = Lux.StatefulLuxLayer{true}(model.node, nothing, st.theta.dynamics.node)
-    dudt(u, p, t; model = stateful) = ude(model, u, p, t)
-    return remake(ude.problem, f = dudt)
+    dudt(u, p, t; model=stateful) = ude(model, u, p, t)
+    return remake(ude.problem, f=dudt)
 end
 
 function solve_for_target(
@@ -104,10 +94,10 @@ _estimate_typ_parameter_size(
 # User-facing prediction — the gap the base UniversalDiffEq leaves open.
 function predict(
     dcm::DeepCompartmentModel{<:UniversalDiffEq,<:HybridModel}, data, ps, st;
-    individual = true, target = true, kwargs...,
+    individual=true, target=true, kwargs...,
 )
     return target ? solve_for_target(dcm, data, ps, st; kwargs...) :
-                    solve(dcm, data, ps, st; kwargs...)
+           solve(dcm, data, ps, st; kwargs...)
 end
 
 """
@@ -117,7 +107,7 @@ Evaluate the NeuralODE `node` on dummy time points to expose the learned
 time-varying function (e.g. a fold-change in clearance). Returns `(t, effect)`.
 """
 function interpret_node(
-    dcm::DeepCompartmentModel{<:UniversalDiffEq,<:HybridModel}, ps, st; t_dummy = 0:360)
+    dcm::DeepCompartmentModel{<:UniversalDiffEq,<:HybridModel}, ps, st; t_dummy=0:360)
     grid = permutedims(collect(Float32, t_dummy))
     effect, _ = dcm.model.node(grid, ps.theta.dynamics.node, st.theta.dynamics.node)
     return vec(grid), vec(effect)

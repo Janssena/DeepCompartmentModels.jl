@@ -1,19 +1,19 @@
 import ForwardDiff
 
-function gradient(objective::AbstractObjective, dcm::DeepCompartmentModel, population::Population, ps, st; parallel = false, batchsize::Int=16)
+function gradient(objective::AbstractObjective, dcm::DeepCompartmentModel, population::Population, ps, st; parallel=false, batchsize::Int=16)
     if parallel == false
         return _gradient(objective, dcm, population, ps, st)
     elseif parallel == true || parallel == :individual
         grads = qmap(eachindex(population)) do i
             _gradient(objective, dcm, population, i:i, ps, st)
         end
-        return fmap(_sum_grads, grads...; exclude = _isleaf_or_vec_of_arrays)
+        return fmap(_sum_grads, grads...; exclude=_isleaf_or_vec_of_arrays)
     elseif parallel == :batch
         batches = create_batches(population, batchsize)
         grads = qmap(batches) do batch
             _gradient(objective, dcm, population, batch, ps, st)
         end
-        return fmap(_sum_grads, grads...; exclude = _isleaf_or_vec_of_arrays)
+        return fmap(_sum_grads, grads...; exclude=_isleaf_or_vec_of_arrays)
     else
         throw(ErrorException("Parallel = $(parallel) not recognized. Please use one of [false, :individual, :batch]"))
     end
@@ -27,7 +27,7 @@ function _gradient(objective::FixedObjective, dcm::DeepCompartmentModel, data, p
 end
 
 function _gradient(objective::FixedObjective, dcm::DeepCompartmentModel, population::Population, batch, ps, st)
-    ps_batch, st_batch = take_batch(ps, st, batch; exclude = dcm.error isa ErrorModelSet ? (:error) : nothing)
+    ps_batch, st_batch = take_batch(ps, st, batch; exclude=dcm.error isa ErrorModelSet ? (:error) : nothing)
     grad = Zygote.gradient(ps_batch) do p
         objective(dcm, population[batch], p, st_batch)
     end
@@ -46,7 +46,7 @@ function _gradient(objective::VariationalELBO{MF,PD,N}, dcm, data, ps, st) where
     Accessors.@reset ∇.theta = grad[1]
     Accessors.@reset ∇.phi = grad[2]
     Accessors.@reset ∇.error = grad[3]
-        
+
     return ∇
 end
 
@@ -65,7 +65,7 @@ function _gradient(::VariationalELBO{MF,PD,N}, dcm, data, ps, st) where {MF,PD<:
 
     # The gradient of m and S given z wrt logq(z)
     ∇_full = add_path_deriv_dlogq(∇, ps, st)
-    
+
     return ∇_full
 end
 
@@ -90,21 +90,21 @@ function add_path_deriv_dlogq(∇, ps, st)
 end
 
 function _gradient(obj::VariationalELBO, dcm::DeepCompartmentModel{P,M}, data, batch::AbstractArray{<:Int}, ps, st) where {P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer}
-    ps_batch, st_batch = take_batch(ps, st, batch; exclude = dcm.error isa ErrorModelSet ? (:error) : nothing)
+    ps_batch, st_batch = take_batch(ps, st, batch; exclude=dcm.error isa ErrorModelSet ? (:error) : nothing)
     grad_batch = _gradient(obj, dcm, data[batch], ps_batch, st_batch)
     # TODO: correct phi indices (potentially more to do for other models)
     grad_phi = fmap(ps.phi) do _
         nothing
     end
     if :z in keys(grad_batch.phi)
-        grad_phi = NamedTuple{(:z,)}((grad_phi.μ, ))
+        grad_phi = NamedTuple{(:z,)}((grad_phi.μ,))
         Accessors.@reset grad_phi.z[batch] = grad_batch.phi.z
     else
         Accessors.@reset grad_phi.μ[batch] = grad_batch.phi.μ
         variance_key = only(filter(!=(:μ), keys(ps.phi)))
         Accessors.@reset grad_phi[variance_key][batch] = grad_batch.phi[variance_key]
     end
-    
+
     return Accessors.@set grad_batch.phi = grad_phi
 end
 
@@ -114,7 +114,7 @@ function create_batches(n::Int, M::Int)
     return map(Base.Fix1(getindex, idxs), batches) # randomize indexes in each batch
 end
 
-create_batches(population::Population, M::Int) = 
+create_batches(population::Population, M::Int) =
     create_batches(length(population), min(M, length(population)))
 
 take_batch(ps::NamedTuple, st::NamedTuple, batch; kwargs...) = take_batch(ps, batch; kwargs...), take_batch(st, batch; kwargs...)
@@ -124,7 +124,7 @@ take_batch(x::AbstractVector{<:AbstractArray{<:Real}}, i; kwargs...) = x[i]
 take_batch(x::AbstractVector{<:AbstractVector{<:AbstractArray{<:Real}}}, i; kwargs...) = x[i]
 take_batch(x::AbstractVector{<:Cholesky}, i; kwargs...) = x[i]
 take_batch(x::AbstractVector{<:AbstractVector{<:Cholesky}}, i; kwargs...) = x[i]
-function take_batch(x::NamedTuple, i; exclude::Union{Nothing, Symbol} = :error)
+function take_batch(x::NamedTuple, i; exclude::Union{Nothing,Symbol}=:error)
     keys_ = keys(x)
     values_ = map(keys_) do key # Almost a fmap, but does not recurse into indexes
         if !isnothing(exclude) && key == exclude
@@ -150,20 +150,20 @@ function _residual_error_predictions(rng, dcm, data, ps, st, num_samples)
     end
 end
 
-function residual_error_value_and_gradient(rng::Random.AbstractRNG, dcm::DeepCompartmentModel{P,M}, data, ps, st; mode::Symbol = :forward, num_samples::Int = 100, predictions=nothing) where {P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer}
+function residual_error_value_and_gradient(rng::Random.AbstractRNG, dcm::DeepCompartmentModel{P,M}, data, ps, st; mode::Symbol=:forward, num_samples::Int=100, predictions=nothing) where {P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer}
     num_samples > 0 || throw(ArgumentError("num_samples must be positive."))
     mode in (:forward, :reverse) || throw(ArgumentError(
         "mode must be :forward or :reverse, got $(repr(mode))."))
     ∇ = NamedTuple{keys(ps)}(fill(nothing, length(keys(ps))))
     predictions = predictions === nothing ?
-        _residual_error_predictions(rng, dcm, data, ps, st, num_samples) : predictions
+                  _residual_error_predictions(rng, dcm, data, ps, st, num_samples) : predictions
     length(predictions) == num_samples || throw(DimensionMismatch(
         "Received $(length(predictions)) prediction draws but num_samples=$num_samples."))
-    
+
     if mode == :forward
         error = ComponentVector(ps.error)
         ad = ForwardDiff
-    else   
+    else
         error = ps.error
         ad = Zygote
     end
@@ -174,8 +174,6 @@ function residual_error_value_and_gradient(rng::Random.AbstractRNG, dcm::DeepCom
             dist = make_dist(dcm.error, ŷ, p)
             _logpdf(dist, get_y(data))
         end
-        # The VEM M-step maximises E_q[log p(y | eta, theta, sigma)].  This is
-        # a mean of complete-data log likelihoods, not log(mean(likelihood)).
         loss = -mean(sample_loglikelihoods)
         push!(res, loss isa ForwardDiff.Dual ? loss.value : loss)
         return loss

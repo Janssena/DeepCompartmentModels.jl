@@ -36,9 +36,6 @@ DCMDataFramesExt = "DataFrames"
 [compat]
 Accessors = "0.1"
 ComponentArrays = "0.15"
-# Distributions 0.25.126+ is currently incompatible with the latest
-# DistributionsAD 0.6 extension API on Julia 1.12. Keep the last verified
-# compatible release until DistributionsAD is removed or updated.
 Distributions = "0.25.0 - 0.25.125"
 DistributionsAD = "0.6"
 ForwardDiff = "1.3"

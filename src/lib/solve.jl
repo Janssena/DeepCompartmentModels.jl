@@ -1,4 +1,4 @@
-SciMLBase.solve(model::AbstractDEModel, individual::AbstractIndividual, z; kwargs...) = 
+SciMLBase.solve(model::AbstractDEModel, individual::AbstractIndividual, z; kwargs...) =
     SciMLBase.solve(model.problem, individual, z; kwargs...)
 
 """
@@ -22,47 +22,47 @@ for the DeepCompartmentModels ecosystem.
 - `kwargs`: Additional keyword arguments that are passed to the solve call from DifferentialEquations.jl.
 """
 function SciMLBase.solve(
-        problem::SciMLBase.AbstractDEProblem, 
-        individual::AbstractIndividual{T,O}, 
-        z::AbstractVecOrMat{<:Real}; 
-        solver = Tsit5(),
-        interpolate::Bool = false, 
-        saveat::AbstractVector{<:Real} = get_t(individual),
-        dt = _safe_initial_dt(T),
-        kwargs...
-    ) where {T,O<:Nothing}
+    problem::SciMLBase.AbstractDEProblem,
+    individual::AbstractIndividual{T,O},
+    z::AbstractVecOrMat{<:Real};
+    solver=Tsit5(),
+    interpolate::Bool=false,
+    saveat::AbstractVector{<:Real}=get_t(individual),
+    dt=_safe_initial_dt(T),
+    kwargs...
+) where {T,O<:Nothing}
     prob = _remake_prob(problem, individual, saveat, z)
     interpolate && _set_save_positions!(individual.callback, true)
     solve_kwargs = isnothing(dt) ? (; kwargs...) : (; dt, kwargs...)
     sol = SciMLBase.solve(prob, solver;
-        saveat = interpolate ? empty(saveat) : saveat, callback = individual.callback,
-        tstops = _get_tstops(individual.callback), solve_kwargs...)
+        saveat=interpolate ? empty(saveat) : saveat, callback=individual.callback,
+        tstops=_get_tstops(individual.callback), solve_kwargs...)
     interpolate && _set_save_positions!(individual.callback, false)
     return sol
 end
 
 function SciMLBase.solve(
-        problem::SciMLBase.AbstractDEProblem, 
-        individual::AbstractIndividual{T,O}, 
-        z::AbstractVecOrMat{<:Real}; 
-        solver = Tsit5(),
-        interpolate::Bool = false, 
-        saveat::AbstractVector{<:Real} = get_t(individual),
-        dt = _safe_initial_dt(T),
-        kwargs...
-    ) where {T,O<:AbstractVector{<:Pair}}
+    problem::SciMLBase.AbstractDEProblem,
+    individual::AbstractIndividual{T,O},
+    z::AbstractVecOrMat{<:Real};
+    solver=Tsit5(),
+    interpolate::Bool=false,
+    saveat::AbstractVector{<:Real}=get_t(individual),
+    dt=_safe_initial_dt(T),
+    kwargs...
+) where {T,O<:AbstractVector{<:Pair}}
 
     interpolate && _set_save_positions!(individual.callback, true)
     tstops = _get_tstops(individual.callback)
     sols = map(individual.occasions) do occ
         saveat_occ = filter(Base.Fix2(_within_occ, occ), saveat)
         tstops_occ = filter(Base.Fix2(_within_occ, occ), tstops)
-        _problem = remake(problem, tspan = (occ.first - T(0.1), problem.tspan[2]))
+        _problem = remake(problem, tspan=(occ.first - T(0.1), problem.tspan[2]))
         prob = _remake_prob(_problem, individual, saveat_occ, z)
         solve_kwargs = isnothing(dt) ? (; kwargs...) : (; dt, kwargs...)
         return SciMLBase.solve(prob, solver;
-            saveat = interpolate ? empty(saveat_occ) : saveat_occ, callback = individual.callback, 
-            tstops = tstops_occ, solve_kwargs...
+            saveat=interpolate ? empty(saveat_occ) : saveat_occ, callback=individual.callback,
+            tstops=tstops_occ, solve_kwargs...
         )
     end
     interpolate && _set_save_positions!(individual.callback, false)
@@ -88,22 +88,22 @@ that the tspan is in support of the maximum of `saveat`.
 function _remake_prob(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual{T}, saveat, z::AbstractArray) where T
     p = construct_p(z, individual)
     u0 = _get_u0(T.(prob.u0), individual.u0)
-    return remake(prob, u0 = T.(u0), tspan = (T(prob.tspan[1]), T(maximum(saveat))), p = p)
+    return remake(prob, u0=T.(u0), tspan=(T(prob.tspan[1]), T(maximum(saveat))), p=p)
 end
 
-_set_save_positions!(callback::DiscreteCallback, value::Bool) = 
+_set_save_positions!(callback::DiscreteCallback, value::Bool) =
     @ignore_derivatives callback.save_positions .= value
 
-_set_save_positions!(callbacks::CallbackSet, value::Bool) = 
+_set_save_positions!(callbacks::CallbackSet, value::Bool) =
     map(Base.Fix2(_set_save_positions!, value), callbacks.discrete_callbacks)
 
-_get_u0(prob_u0::AbstractVector{T}, individual_u0::AbstractVector{T}) where T<:Real = 
+_get_u0(prob_u0::AbstractVector{T}, individual_u0::AbstractVector{T}) where T<:Real =
     !isempty(individual_u0) ? individual_u0 : prob_u0
 
 _get_tstops(callback::DiscreteCallback) = callback.condition.times
 
 # TODO: What about continuous callbacks?
-_get_tstops(callbacks::CallbackSet) = 
+_get_tstops(callbacks::CallbackSet) =
     sort(reduce(vcat, map(_get_tstops, callbacks.discrete_callbacks)))
 
 
@@ -120,7 +120,7 @@ variables in the DEFunction.
 - `z`: DE parameters.
 - `individual`: Individual for which the DE is solved.
 """
-construct_p(z::AbstractVector{T}, ::AbstractIndividual) where T = 
+construct_p(z::AbstractVector{T}, ::AbstractIndividual) where T =
     vcat(z, zero(T))
 
 """
@@ -130,7 +130,7 @@ DE parameters for TimeVariableIndividuals are Matrices and thus a specific funct
 required to add zeros to the bottom row of the matrix to correctly set the treament
 intervention.
 """
-construct_p(z::AbstractMatrix{T}, ::TimeVariableIndividual) where T = 
+construct_p(z::AbstractMatrix{T}, ::TimeVariableIndividual) where T =
     vcat(z, zeros(T, 1, size(z, 2)))
 
 """
@@ -150,7 +150,7 @@ end
 Specific version of the solve call that passes the sensealg to the solve call, only grabs the target 
 indices from prediction inside the `sol` object.
 """
-function solve_for_target(model::DeepCompartmentModel{P,M,E,T}, individual::AbstractIndividual, z::AbstractArray{<:Real}; sensealg = model.sensealg, kwargs...) where {P,M,E,T}
+function solve_for_target(model::DeepCompartmentModel{P,M,E,T}, individual::AbstractIndividual, z::AbstractArray{<:Real}; sensealg=model.sensealg, kwargs...) where {P,M,E,T}
     sol = solve(model.problem, individual, z; sensealg, kwargs...)
     return _take_target(sol, individual, model.target) # old
 end
@@ -160,7 +160,7 @@ _take_target(sol::DESolution, ::AbstractIndividual, target::Int) = _take_target(
 _take_target(::DESolution, ::MOIndividual, ::Int) = throw(DimensionMismatch(
     "MOIndividual requires a vector target with one state index per dependent variable."))
 
-function _take_target(sol::DESolution, individual::MOIndividual, target::AbstractVector{Int}) 
+function _take_target(sol::DESolution, individual::MOIndividual, target::AbstractVector{Int})
     length(target) == length(individual.ys) || throw(DimensionMismatch(
         "The model target has $(length(target)) entries but the individual has $(length(individual.ys)) dependent variables."))
     ŷs = _take_target(sol, target)
@@ -169,24 +169,24 @@ end
 
 # TODO: version that works with multiple dvs
 _take_target(sol::DESolution, target::Int) = Array(sol)[target, :]
-function _take_target(sol::DESolution, target::AbstractVector{Int}) 
+function _take_target(sol::DESolution, target::AbstractVector{Int})
     preds = Array(sol)
     return map(target) do j
         preds[j, :]
     end
 end
 
-_take_target(sols::AbstractVector{<:DESolution}, target) = 
+_take_target(sols::AbstractVector{<:DESolution}, target) =
     map(Base.Fix2(_take_target, target), sols)
 
-solve_for_target(dcm::DeepCompartmentModel{P,M,E,T}, population::Population{<:AbstractIndividual}, z::AbstractMatrix; kwargs...) where {P,M,E,T} = 
-    solve_for_target.((dcm, ), population, eachcol(z); kwargs...)
+solve_for_target(dcm::DeepCompartmentModel{P,M,E,T}, population::Population{<:AbstractIndividual}, z::AbstractMatrix; kwargs...) where {P,M,E,T} =
+    solve_for_target.((dcm,), population, eachcol(z); kwargs...)
 
-solve_for_target(dcm::DeepCompartmentModel{P,M,E,T}, population::Population{<:TimeVariableIndividual}, z::AbstractVector{<:AbstractMatrix}; kwargs...) where {P,M,E,T} = 
-    solve_for_target.((dcm, ), population, z; kwargs...)
+solve_for_target(dcm::DeepCompartmentModel{P,M,E,T}, population::Population{<:TimeVariableIndividual}, z::AbstractVector{<:AbstractMatrix}; kwargs...) where {P,M,E,T} =
+    solve_for_target.((dcm,), population, z; kwargs...)
 
-SciMLBase.solve(dcm::AbstractDEModel, population::Population{<:AbstractIndividual}, z::AbstractMatrix; kwargs...) = 
-    SciMLBase.solve.((dcm, ), population, eachcol(z); kwargs...)
+SciMLBase.solve(dcm::AbstractDEModel, population::Population{<:AbstractIndividual}, z::AbstractMatrix; kwargs...) =
+    SciMLBase.solve.((dcm,), population, eachcol(z); kwargs...)
 
-SciMLBase.solve(dcm::AbstractDEModel, population::Population{<:TimeVariableIndividual}, z::AbstractVector{<:AbstractMatrix}; kwargs...) = 
-    SciMLBase.solve.((dcm, ), population, z; kwargs...)
+SciMLBase.solve(dcm::AbstractDEModel, population::Population{<:TimeVariableIndividual}, z::AbstractVector{<:AbstractMatrix}; kwargs...) =
+    SciMLBase.solve.((dcm,), population, z; kwargs...)

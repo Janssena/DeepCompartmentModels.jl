@@ -1,26 +1,3 @@
-# Gate 7A — fixed-effect observed-information (Hessian) uncertainty.
-#
-# Uncertainty is reported ONLY for identified parameters: the named structural
-# parameters of a `StructuralParameters` layer and the residual-error parameters
-# of a single (non-set) Gaussian/likelihood error model. Raw neural-network
-# weights are never treated as identified pharmacokinetic coefficients — this
-# matches the honest `coef`/`coefnames` contract from Gate 8A.
-#
-# The covariance is the inverse observed information matrix of the negative
-# log-likelihood, computed on the optimizer (unconstrained) scale and mapped to
-# the declared natural scale with the delta method. Two independent automatic-
-# differentiation paths are used so the Hessian verifies itself:
-#   * primary   — `ForwardDiff.hessian` of the objective (forward-mode duals);
-#   * crosscheck — central finite differences of the reverse-mode (`Zygote`)
-#                  gradient already used by `fit`.
-# Finite-differencing the objective *value* is deliberately NOT used: with a
-# Float32 observation grid and dosing callbacks the objective carries value-level
-# kinks that make objective-difference derivatives unreliable, while both AD
-# paths remain accurate.
-
-# Internal residual-error mapping. σ is stored on the invsoftplus scale, so its
-# natural standard deviation is `softplus(unconstrained)`. Not exported: the
-# public transform set stays Identity/Log/Logit (Gate 8A).
 struct SoftplusTransform <: AbstractParameterTransform end
 _to_natural(::SoftplusTransform, value) = softplus(value)
 
@@ -113,7 +90,7 @@ end
 # Rebuild the fixed-effect parameter tree from a flat unconstrained vector while
 # preserving the element type (Float64 or a ForwardDiff.Dual).
 _scatter_fixed(u, k) =
-    (theta = (unconstrained = u[1:k],), error = (σ = u[(k + 1):end],))
+    (theta=(unconstrained=u[1:k],), error=(σ=u[(k+1):end],))
 
 # ---- Hessian construction --------------------------------------------------
 
@@ -123,8 +100,10 @@ function _finite_difference_hessian(negll, u0, step)
     H = Matrix{Float64}(undef, n, n)
     for j in 1:n
         h = step * max(abs(u0[j]), 1.0)
-        up = copy(u0); up[j] += h
-        um = copy(u0); um[j] -= h
+        up = copy(u0);
+        up[j] += h
+        um = copy(u0);
+        um[j] -= h
         H[:, j] = (grad(up) .- grad(um)) ./ (2h)
     end
     return H
@@ -274,7 +253,7 @@ end
 # Rebuild a mixed-effect parameter tree from the flat unconstrained population
 # vector, keeping omega/phi from the fitted parameters fixed.
 _scatter_mixed(u, k, base_ps) = merge(base_ps,
-    (theta = (unconstrained = u[1:k],), error = (σ = u[(k + 1):end],)))
+    (theta=(unconstrained=u[1:k],), error=(σ=u[(k+1):end],)))
 
 function _mixed_uncertainty(result::FitResult; level, fdstep)
     layout = _identified_layout(result)
@@ -329,22 +308,22 @@ end
 
 function _show_parameter_table(io, u)
     header = ("parameter", "kind", "estimate", "SE", "RSE%",
-              "lower", "upper", "unit")
+        "lower", "upper", "unit")
     widths = (12, 11, 12, 11, 8, 12, 12, 10)
     _row(io, header, widths)
     for i in eachindex(u.names)
         unit = u.units[i] === nothing ? "" : u.units[i]
         _row(io, (
-            string(u.names[i]), string(u.kinds[i]),
-            _fmt(u.estimate[i]), _fmt(u.standard_error[i]),
-            _fmt(u.relative_standard_error[i]),
-            _fmt(u.lower[i]), _fmt(u.upper[i]), unit), widths)
+                string(u.names[i]), string(u.kinds[i]),
+                _fmt(u.estimate[i]), _fmt(u.standard_error[i]),
+                _fmt(u.relative_standard_error[i]),
+                _fmt(u.lower[i]), _fmt(u.upper[i]), unit), widths)
     end
     d = u.diagnostics
     print(io, "diagnostics: ‖grad‖∞=", _fmt(d.gradient_norm),
-          ", cond(H)=", _fmt(d.condition_number),
-          ", symmetry=", _fmt(d.hessian_symmetry),
-          ", cross-check=", _fmt(d.hessian_cross_check))
+        ", cond(H)=", _fmt(d.condition_number),
+        ", symmetry=", _fmt(d.hessian_symmetry),
+        ", cross-check=", _fmt(d.hessian_cross_check))
 end
 
 function Base.show(io::IO, u::FixedEffectUncertainty)
@@ -361,7 +340,7 @@ function Base.show(io::IO, u::MixedEffectUncertainty)
     println(io)
     for (j, index) in enumerate(u.random_effect_indices)
         println(io, "  omega[z$index] SD = ", _fmt(u.omega_sd[j]),
-                ",  shrinkage = ", _fmt(u.shrinkage[j]))
+            ",  shrinkage = ", _fmt(u.shrinkage[j]))
     end
 end
 

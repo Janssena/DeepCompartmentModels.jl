@@ -1,16 +1,3 @@
-# Gate 7B — standardized model-evaluation records.
-#
-# `prediction_record` builds one honest, error-model-aware row per observation:
-# the structural prediction, the predictive distribution's mean and standard
-# deviation (from `make_dist`), the raw residual, and the population weighted
-# residual. It is error-model-aware (Gaussian and distribution-backed custom
-# likelihoods alike) and aligns multi-output / asynchronous dependent-variable
-# observations by their own time vectors — it never silently reuses one DV's
-# times for another.
-#
-# This is a core data layer with no plotting dependency; goodness-of-fit,
-# residual and dense-profile figures live in the optional analysis layer and are
-# built from these columns.
 
 """
     PredictionRecord
@@ -52,7 +39,7 @@ function Base.show(io::IO, record::PredictionRecord)
     subjects = length(unique(record.id))
     outputs = length(unique(record.dv))
     print(io, "PredictionRecord($n observations; $subjects subjects; ",
-          "$outputs output(s))")
+        "$outputs output(s))")
 end
 
 _dv_times(individual::AbstractIndividual, ::Int) = get_t(individual)
@@ -71,7 +58,7 @@ function _predictive_moments(error::AbstractErrorModel, prediction, ps_error)
 end
 
 function _push_dv!(columns, id, dv, times, observations, prediction,
-                   predictive_mean, predictive_std)
+    predictive_mean, predictive_std)
     for k in eachindex(observations)
         push!(columns.id, id)
         push!(columns.dv, dv)
@@ -82,7 +69,7 @@ function _push_dv!(columns, id, dv, times, observations, prediction,
         push!(columns.predictive_std, predictive_std[k])
         push!(columns.residual, observations[k] - prediction[k])
         push!(columns.weighted_residual,
-              (observations[k] - predictive_mean[k]) / predictive_std[k])
+            (observations[k] - predictive_mean[k]) / predictive_std[k])
     end
     return nothing
 end
@@ -123,7 +110,7 @@ function _record_individual!(columns, error, individual::AbstractIndividual, pre
     predictive_mean, predictive_std = _predictive_moments(
         error, prediction, _ps_error(ps))
     _push_dv!(columns, individual.id, 1, get_t(individual), observations,
-              prediction, predictive_mean, predictive_std)
+        prediction, predictive_mean, predictive_std)
     return nothing
 end
 
@@ -134,7 +121,7 @@ function _record_individual!(columns, error, individual::MOIndividual, predictio
     moments = _mo_predictive_moments(error, predictions, _ps_error(ps))
     for j in eachindex(observations)
         _push_dv!(columns, individual.id, j, _dv_times(individual, j),
-                  observations[j], predictions[j], moments[j][1], moments[j][2])
+            observations[j], predictions[j], moments[j][1], moments[j][2])
     end
     return nothing
 end
@@ -148,7 +135,7 @@ end
 
 function _mo_predictive_moments(::ImplicitError, predictions, ps_error)
     return map(prediction -> (Float64.(prediction), fill(NaN, length(prediction))),
-               predictions)
+        predictions)
 end
 
 function prediction_record(result::FitResult)
@@ -156,6 +143,6 @@ function prediction_record(result::FitResult)
         "prediction_record is only implemented for a DeepCompartmentModel."))
     # Mixed-effect fits use deterministic empirical-Bayes random effects (IPRED).
     st = result.metadata.effects === :mixed ?
-        _empirical_bayes_state(result.st) : result.st
+         _empirical_bayes_state(result.st) : result.st
     return prediction_record(result.model, result.data, result.ps, st)
 end
