@@ -114,14 +114,24 @@ Base.show(io::IO, error::CombinedError{T}) where T =
     print(io, "CombinedError{dependent = $T}(init = $(error.init))")
 
 """
-    CustomError
+    CustomError(init; model = nothing)
 
-CustomError error model. Requires the definition of a var(::CustomError, ŷ, ps, st) function 
-that returns the variance Σ of the observations (in Matrix form).
+Custom observation-error model. There are two supported extension routes:
+
+1. With `model = nothing`, overload `Statistics.var(::CustomError, yhat, ps, st)`
+   and return the observation covariance matrix. The likelihood is multivariate
+   normal with mean `yhat`.
+2. Pass a callable `model`. It is called as `model(yhat, ps, st; kwargs...)` and
+   must return a `Distribution`. This route supports non-Gaussian likelihoods and
+   transformed-scale models such as log-transform-both-sides.
+
+For a statistically proper LTBS likelihood on positive observations, return a
+product of `LogNormal(log(yhat), sigma)` distributions. This keeps data and ODE
+predictions on their natural scale and includes the transformation Jacobian.
 
 # Arguments
-- `num_params::Int`: Number of parameters to use in the error function.
-- `init_f`: Function to initialize parameters. Default = init_sigma.
+- `init=[]`: Initial values for the custom likelihood parameters.
+- `model=nothing`: Optional callable returning a `Distribution`.
 """
 struct CustomError{M} <: AbstractErrorModel 
     model::M
@@ -129,17 +139,33 @@ struct CustomError{M} <: AbstractErrorModel
     CustomError(init=Float32[]; model = nothing) = new{typeof(model)}(model, init)
 end
 
-# TODO: add the option to covariates in here, should be through the passing of individual and taking individual.x.error
-# Alternatively, the covariates can be put in the state? Little messy though
-var(::CustomError, ŷ::AbstractVector, ps, st) = 
+function make_dist(error::CustomError{Nothing}, ŷ::AbstractVector{<:Real}, ps, st; kwargs...)
+    return MvNormal(ŷ, error(ŷ, ps, st; kwargs...))
+end
+
+function make_dist(error::CustomError, ŷ::AbstractVector{<:Real}, ps, st; kwargs...)
+    dist = error.model(ŷ, ps, st; kwargs...)
+    dist isa Distribution || throw(ArgumentError(
+        "CustomError model must return a Distributions.jl Distribution, got $(typeof(dist))."))
+    return dist
+end
+
+# TODO: add covariates, potentially through individual.x.error or state.
+var(::CustomError{Nothing}, ŷ::AbstractVector, ps, st) =
     throw(ErrorException("`var` method not implemented. Overload Statistics.var when using CustomError error."))
+
+function var(error::CustomError, ŷ::AbstractVector, ps, st)
+    marginal_variances = Distributions.var(make_dist(error, ŷ, ps, st))
+    return marginal_variances isa AbstractMatrix ? marginal_variances :
+           Diagonal(marginal_variances)
+end
 
 Base.show(io::IO, ::CustomError) = print(io, "CustomError(...)")
 
 """
     ErrorModelSet
 
-Error model consisting of a set of AbstractErrorModels for multiple objectives. 
+Error model consisting of one `AbstractErrorModel` per dependent variable.
 
 # Arguments
 - `errors`: Tuple containing the different ErrorModels.
@@ -150,8 +176,17 @@ struct ErrorModelSet{E} <: AbstractErrorModel
         new{typeof(errors)}(errors)
 end
 
+function _check_error_model_set(error::ErrorModelSet, ŷs)
+    length(error.errors) == length(ŷs) || throw(DimensionMismatch(
+        "ErrorModelSet has $(length(error.errors)) models but predictions contain $(length(ŷs)) dependent variables."))
+    return nothing
+end
+
+_error_model_parameters(ps, j) = hasproperty(ps, :σ) ? (σ = ps.σ[j],) : take_batch(ps, j)
+
 var(error::ErrorModelSet, ŷs::AbstractVector{<:AbstractVector{<:Real}}, ps, st) = map(eachindex(ŷs)) do j
-    var(error.errors[j], ŷs[j], take_batch(ps, st, j)...)
+    _check_error_model_set(error, ŷs)
+    var(error.errors[j], ŷs[j], _error_model_parameters(ps, j), take_batch(st, j))
 end
 
 Base.show(io::IO, error::ErrorModelSet) = 
@@ -161,5 +196,9 @@ make_dist(error::ErrorModelSet, ŷs::AbstractVector{<:AbstractVector{<:Abstract
     make_dist(error, ŷᵢ, ps, st)
 end
 
-make_dist(error::ErrorModelSet, ŷs::AbstractVector{<:AbstractVector{<:Real}}, ps, st; kwargs...) = 
-    MvNormal.(ŷs, var(error, ŷs, ps, st; kwargs...))
+function make_dist(error::ErrorModelSet, ŷs::AbstractVector{<:AbstractVector{<:Real}}, ps, st; kwargs...)
+    _check_error_model_set(error, ŷs)
+    return map(eachindex(ŷs)) do j
+        make_dist(error.errors[j], ŷs[j], _error_model_parameters(ps, j), take_batch(st, j); kwargs...)
+    end
+end

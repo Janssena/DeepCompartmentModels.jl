@@ -22,6 +22,10 @@ using Reexport
 @reexport using OrdinaryDiffEq
 @reexport using SciMLSensitivity
 
+# Extend the StatsAPI `fit` generic re-exported by Distributions.
+import Distributions: fit
+import StatsAPI: coef, coefnames, vcov, stderror, confint
+
 import Zygote.ChainRules: @non_differentiable, @ignore_derivatives, ignore_derivatives
 import Zygote
 import Random
@@ -41,8 +45,14 @@ export  AbstractIndividual, BasicIndividual, TimeVariableIndividual, MOIndividua
         Individual, Population, get_x, get_t, get_tx, get_y, load
 
 include("lib/error.jl");
-export  AbstractErrorModel, AdditiveError, ProportionalError, CombinedError, 
+export  AbstractErrorModel, AdditiveError, ProportionalError, CombinedError,
         CustomError, ErrorModelSet, make_dist, var
+
+include("lib/structural.jl");
+export  AbstractParameterTransform, IdentityTransform, LogTransform,
+        LogitTransform, StructuralParameter, StructuralParameters,
+        parameter_names, parameter_units, parameter_transforms, parameter_bounds,
+        natural_parameters, unconstrained_parameters
 
 include("lib/dcm.jl");
 export  DeepCompartmentModel, DCM, predict_typ_parameters, predict_de_parameters, 
@@ -58,7 +68,7 @@ include("lib/solve.jl");
 export  solve, solve_for_target, construct_p
 
 include("lib/random_effects.jl");
-export  get_random_effects, make_etas, sample_gaussian, update_epsilon!
+export  get_random_effects, sample_gaussian, update_epsilon!
 
 include("lib/objectives.jl");
 export  MSE, SSE, LogLikelihood, VariationalELBO, mse, sse, 
@@ -71,13 +81,41 @@ export  setup, setup_phi
 include("lib/gradients.jl");
 export  gradient, create_batches, take_batch, residual_error_value_and_gradient
 
+include("lib/fit_result.jl");
+export  FitResult, isconverged, niterations, objective_history, fit_status,
+        coef, coefnames, coefunits, empirical_bayes
+
+include("lib/fit.jl");
+export  fit
+
 include("lib/vem.jl");
 export  m_step, optimise_omega, optimise_residual_error
+
+include("lib/uncertainty.jl");
+export  uncertainty, FixedEffectUncertainty, MixedEffectUncertainty,
+        vcov, stderror, confint
+
+include("lib/diagnostics.jl");
+export  prediction_record, PredictionRecord
+
+include("lib/simulate.jl");
+export  simulate, dose_regimen, simulation_population, parameter_draws,
+        vpc, VPCSummary
+
+include("lib/hybrid_ude.jl");
+export  HybridModel, CustomUDE, AbstractHybridUDEType, interpret_node
 
 include("lib/callbacks.jl");
 export  generate_dosing_callback
 
 include("lib/lux.helpers.jl");
-export  Normalize, AddGlobalParameters, Combine, SingleHeadedBranch, 
+export  Normalize, InitialScale, AddGlobalParameters, Combine, SingleHeadedBranch,
         MultiHeadedBranch, make_branch, interpret_branch
+
+# Intentionally dormant source files:
+# - lib/optimization.jl contains the superseded experimental fit pipeline and is
+#   not loaded. The supported fixed-effect implementation lives in lib/fit.jl.
+# - lib/node.jl, lib/low_dim_node.jl, and lib/auto_encoding_node.jl contain
+#   experimental NODE variants and are not loaded. UniversalDiffEq is the only
+#   NODE-family model currently in the public API.
 end

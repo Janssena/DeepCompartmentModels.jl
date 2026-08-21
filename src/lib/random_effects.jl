@@ -40,11 +40,24 @@ sample_gaussian(ps::NamedTuple{(:μ, :σ²), <:Tuple{<:AbstractVector{<:Real}, <
 sample_gaussian(μ::AbstractVector, L::LowerTriangular, ϵ::AbstractVector) = μ + L * ϵ
 sample_gaussian(μ::AbstractVector, σ::AbstractVector, ϵ::AbstractVector) = μ + σ .* ϵ
 
-function update_epsilon!(rng::Random.AbstractRNG, st::NamedTuple) 
+function update_epsilon!(rng::Random.AbstractRNG, st::NamedTuple)
     fmap_with_path(st) do kp, x
         if :epsilon in kp
             x .= randn(rng, eltype(x), size(x))
         end
     end
     return nothing
+end
+
+"""
+    _empirical_bayes_state(st)
+
+Return a copy of the model state with the variational sampling noise `epsilon`
+zeroed, so that `sample_gaussian` returns the variational posterior means (η = μ).
+Predictions made with this state are the deterministic empirical-Bayes estimates
+(EBEs) rather than a random posterior draw. For a fixed-effect state (no `phi`)
+this is a no-op.
+"""
+_empirical_bayes_state(st::NamedTuple) = fmap_with_path(st) do kp, x
+    :epsilon in kp ? zero(x) : x
 end

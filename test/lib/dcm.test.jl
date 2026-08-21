@@ -1,24 +1,41 @@
-@testset "Run through entire processs" begin
-    callback = generate_dosing_callback([0 1 60 1/60])
-    
-    population = Population([
-        Individual("test_1", [1., 1.], [12., 24], [1., 0.3], callback)
-        Individual("test_2", [0., 0.], [12., 24], [1., 0.3], callback)
-    ])
+@testset "one fixed-effect training step" begin
+    model = toy_dcm()
+    population = toy_population(; n = 2)
+    objective = SSE()
+    ps, st = setup(objective, Random.default_rng(), model)
 
-    ann = Lux.Chain(
-        Lux.Dense(2, 16, Lux.swish),
-        Lux.Dense(16, 3, Lux.softplus),
-    )
+    loss_before = objective(model, population, ps, st)
+    parameter_gradient = gradient(objective, model, population, ps, st)
+    optimiser_state = Optimisers.setup(Optimisers.Adam(1.0f-3), ps)
+    optimiser_state, ps_updated =
+        Optimisers.update(optimiser_state, ps, parameter_gradient)
+    loss_after = objective(model, population, ps_updated, st)
 
-    obj_fn = SSE()
-    model = DCM(one_comp_abs!, ann)
+    @test isfinite(loss_before)
+    @test isfinite(loss_after)
+    @test ps_updated !== ps
+    @test ps_updated.theta.layer_2.weight != ps.theta.layer_2.weight
+end
 
-    ps, st = setup(obj_fn, model)
+@testset "fixed-effect objectives are finite and distinct" begin
+    population = toy_population(; n = 1)
+    model = toy_dcm()
+    ps, st = setup(SSE(), Random.MersenneTwister(12), model)
 
-    opt = Optimisers.Adam(0.1f0)
+    mse_loss = MSE()(model, population, ps, st)
+    sse_loss = SSE()(model, population, ps, st)
+    @test isfinite(mse_loss)
+    @test isfinite(sse_loss)
+    @test sse_loss ≈ length(get_y(first(population))) * mse_loss
+    @test all(isfinite, gradient(MSE(), model, population, ps, st).theta.layer_2.weight)
 
-    _, ps_update, _ = fit(SSE(), model, population, opt, ps, st; epochs = 1);
-    
-    @test ps !== ps_update
+    likelihood_model = toy_dcm(; error = AdditiveError(0.2f0))
+    ps_ll, st_ll = setup(
+        LogLikelihood(), Random.MersenneTwister(12), likelihood_model)
+    likelihood_loss = LogLikelihood()(likelihood_model, population, ps_ll, st_ll)
+    likelihood_gradient = gradient(
+        LogLikelihood(), likelihood_model, population, ps_ll, st_ll)
+    @test isfinite(likelihood_loss)
+    @test all(isfinite, likelihood_gradient.theta.layer_2.weight)
+    @test all(isfinite, likelihood_gradient.error.σ)
 end

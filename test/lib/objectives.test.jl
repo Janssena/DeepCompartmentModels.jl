@@ -1,109 +1,83 @@
 using LinearAlgebra
+import Zygote
 
 @testset "_logpdf for objectives" begin
-    # setup
-    M = 3
     error = AdditiveError()
-    ps = (error = (σ = [0.1], ), )
-    ŷ_pop = [rand(3), rand(4), rand(2), rand(1)]
-    ŷ_pop_mc = [[rand(3), rand(4), rand(2), rand(1)] for _ in 1:M]
-    ŷ_indv_mc = [rand(3) for _ in 1:M]
+    ps = (σ = [0.1],)
+    yhat = [rand(3), rand(4), rand(2), rand(1)]
     y = [rand(3), rand(4), rand(2), rand(1)]
-    # AbstractModel
-    # ŷ = rand(10)
-    # dist = make_dist(error, ŷ, ps)
-    # y₁ = rand(10)
-    # y₂ = [rand(3), rand(4), rand(2), rand(1)] → TODO: how to get pred in this shape for StandardNeuralNetwork?...
 
-    # @test DeepCompartmentModels._logpdf(dist, y₁) == logpdf(dist, y₁)
-    # @test DeepCompartmentModels._logpdf(dist, y₂) == sum(logpdf(dist, reduce(vcat, y₂)))
+    population_dist = make_dist(error, yhat, ps)
+    @test DeepCompartmentModels._logpdf(population_dist, y) ==
+          sum(logpdf.(population_dist, y))
 
-    # AbstractDEModel
-    # Population prediction with MonteCarlo samples
-    dist₁ = make_dist(error, ŷ_pop_mc, ps)
-    @test length(DeepCompartmentModels._logpdf(dist₁, y)) == M
-    @test all(isapprox.(DeepCompartmentModels._logpdf(dist₁, y), [sum(logpdf.(dist₁[i], y)) for i in eachindex(dist₁)]))
-
-    # Population prediction
-    dist₂ = make_dist(error, ŷ_pop, ps)
-    @test DeepCompartmentModels._logpdf(dist₂, y) == sum(logpdf.(dist₂, y))
-
-    # MonteCarlo sample for individual
-    dist₃ = make_dist(error, ŷ_indv_mc, ps)
-    @test length(DeepCompartmentModels._logpdf(dist₃, y[1])) == M
-    @test DeepCompartmentModels._logpdf(dist₃, y[1]) == logpdf.(dist₃, (y[1], ))
-    
-    # Individual prediction
-    idx = 1
-    dist₄ = make_dist(error, ŷ_pop[idx], ps)
-    @test DeepCompartmentModels._logpdf(dist₄, y[idx]) == logpdf(dist₄, y[idx])
+    individual_dist = make_dist(error, yhat[1], ps)
+    @test DeepCompartmentModels._logpdf(individual_dist, y[1]) ==
+          logpdf(individual_dist, y[1])
 end
 
-@testset "logprior" begin
-    M = 3
-    omega_dist₁ = MvNormal(zeros(2), [0.1 0; 0 0.1])
-    omega_dist₂ = Normal(0., 0.1)
-    η₁ = rand(2, 10)
-    η₂ = rand(10)
-    # with Monte Carlo samples
-    η₃ = [rand(2, 10) for _ in 1:M]
-    η₄ = [rand(10) for _ in 1:M]
+@testset "variational distributions" begin
+    n_individuals = 4
+    n_random_effects = 2
+    means = [zeros(n_random_effects) for _ in 1:n_individuals]
+    factors = [LowerTriangular(0.2I(n_random_effects)) for _ in 1:n_individuals]
+    unconstrained_scales = [fill(-2.0, n_random_effects) for _ in 1:n_individuals]
 
-    # _get_prior
-    @test DeepCompartmentModels._get_prior(Symmetric(omega_dist₁.Σ.mat)) isa TuringDenseMvNormal
-    @test DeepCompartmentModels._get_prior(0.1) isa Normal
-    
-    # Multivariate eta for population
-    @test DeepCompartmentModels._logpdf(omega_dist₁, η₁) == sum(logpdf(omega_dist₁, η₁))
-    @test DeepCompartmentModels.logprior(omega_dist₁, η₁) == sum(logpdf(omega_dist₁, η₁))
-    # Univariate eta for population
-    @test DeepCompartmentModels._logpdf(omega_dist₂, η₂) == sum(map(Base.Fix1(logpdf, omega_dist₂), η₂))
-    @test DeepCompartmentModels.logprior(omega_dist₂, η₂) == sum(map(Base.Fix1(logpdf, omega_dist₂), η₂))
-    
-    # Monte Carlo samples of eta for population
-    # Multivariate eta
-    @test all(isapprox.(DeepCompartmentModels.logprior(omega_dist₁, η₃), sum.([logpdf(omega_dist₁, η₃[i]) for i in eachindex(η₃)])))
-    # Univariate eta
-    @test all(isapprox.(DeepCompartmentModels.logprior(omega_dist₂, η₄), sum.([logpdf(omega_dist₂, η₄[i]) for i in eachindex(η₄)])))
+    full_rank = getq((μ = means, L = factors))
+    mean_field = getq((μ = means, σ = unconstrained_scales))
 
-    # How will this work for individuals? We need to keep the original type intact
+    @test length(full_rank) == n_individuals
+    @test length(mean_field) == n_individuals
+    @test all(length.(full_rank) .== n_random_effects)
+    @test all(length.(mean_field) .== n_random_effects)
+
+    eta = [rand(n_random_effects) for _ in 1:n_individuals]
+    @test DeepCompartmentModels._logpdf(full_rank, eta) == sum(logpdf.(full_rank, eta))
+    @test DeepCompartmentModels._logpdf(mean_field, eta) == sum(logpdf.(mean_field, eta))
 end
 
-@testset "logq" begin
-    N = 10
-    M = 3
-    phi_fr = (μ = [zeros(2) for _ in 1:N], L = fill(LowerTriangular([0.316228 0; 0 0.316228]), N)) # full-rank multivariate omega
-    phi_mf = (μ = [zeros(2) for _ in 1:N], σ = [fill(0.1, 2) for _ in 1:N]) # mean-field multivariate omega
-    phi_uni = (μ = zeros(N), σ = fill(0.1, N)) # univariate omega
-    
-    η_mv = rand(2, N)
-    η_uni = rand(N)
-    η_mv_mc = [rand(2, N) for _ in 1:M]
-    η_uni_mc = [rand(N) for _ in 1:M]
+@testset "CustomError distribution hook" begin
+    gaussian_model = (prediction, ps, st; kwargs...) ->
+        MvNormal(prediction, Diagonal(fill(DeepCompartmentModels.softplus(only(ps.σ))^2,
+                                           length(prediction))))
+    error = CustomError([0.2]; model = gaussian_model)
+    ps = (σ = [DeepCompartmentModels.invsoftplus(0.2)],)
+    prediction = [1.0, 2.0, 3.0]
 
-    q_fr = getq(VariationalELBO([1,2], FullRank()), phi_fr)
-    q_mf = getq(VariationalELBO([1,2], MeanField()), phi_mf)
-    q_uni = getq(VariationalELBO([1]), phi_uni)
+    dist = make_dist(error, prediction, ps)
+    @test dist isa MvNormal
+    @test mean(dist) == prediction
+    @test diag(var(error, prediction, ps, NamedTuple())) ≈ fill(0.2^2, 3)
 
-    @test q_fr isa AbstractVector{<:TuringDenseMvNormal}
-    @test q_mf isa AbstractVector{<:TuringDiagMvNormal}
-    @test q_uni isa TuringDiagMvNormal
-    # When eta is univariate, it shouldn't matter whether we are using Meanfield or FullRank
-    @test getq(VariationalELBO([1], MeanField()), phi_uni) == getq(VariationalELBO([1], FullRank()), phi_uni)
-    
-    # Multivariate eta with Fullrank q
-    @test DeepCompartmentModels._logpdf(q_fr, η_mv) == sum(logpdf.(q_fr, eachcol(η_mv)))
-    @test logq(q_fr, η_mv) == sum(logpdf.(q_fr, eachcol(η_mv)))
-    # Monte Carlo samples
-    @test DeepCompartmentModels._logpdf.((q_fr, ), η_mv_mc) == [sum(logpdf.(q_fr, eachcol(η_mv_mc[i]))) for i in eachindex(η_mv_mc)]
-    @test logq(q_fr, η_mv_mc) == [sum(logpdf.(q_fr, eachcol(η_mv_mc[i]))) for i in eachindex(η_mv_mc)]
-    # Multivariate eta with meanfield q
-    @test DeepCompartmentModels._logpdf(q_mf, η_mv) == sum(logpdf.(q_mf, eachcol(η_mv)))
-    @test logq(q_mf, η_mv) == sum(logpdf.(q_mf, eachcol(η_mv)))
+    invalid = CustomError([0.2]; model = (args...; kwargs...) -> 1.0)
+    @test_throws ArgumentError make_dist(invalid, prediction, ps)
+    @test_throws ErrorException make_dist(CustomError([0.2]), prediction, ps)
+end
 
-    # Univariate eta
-    @test DeepCompartmentModels._logpdf(q_uni, η_uni) == logpdf(q_uni, η_uni)
-    @test logq(q_uni, η_uni) == logpdf(q_uni, η_uni)
-    # Monte Carlo samples
-    @test logq(q_uni, η_uni_mc) == [logpdf(q_uni, η_uni_mc[i]) for i in eachindex(η_uni_mc)]
+@testset "CustomError log-transform-both-sides" begin
+    function ltbs_model(prediction, ps, st; kwargs...)
+        all(>(zero(eltype(prediction))), prediction) || throw(DomainError(
+            minimum(prediction), "LTBS requires strictly positive predictions."))
+        sigma = DeepCompartmentModels.softplus(only(ps.σ))
+        return product_distribution(LogNormal.(log.(prediction), sigma))
+    end
+
+    error = CustomError([0.3]; model = ltbs_model)
+    raw_sigma = DeepCompartmentModels.invsoftplus(0.3)
+    ps = (σ = [raw_sigma],)
+    prediction = [0.25, 1.0, 10.0]
+    observation = [0.3, 0.8, 12.0]
+
+    dist = make_dist(error, prediction, ps)
+    expected = sum(logpdf.(LogNormal.(log.(prediction), 0.3), observation))
+    @test logpdf(dist, observation) ≈ expected
+    @test all(rand(dist, 100) .> 0)
+
+    expected_variance = prediction.^2 .* exp(0.3^2) .* expm1(0.3^2)
+    @test diag(var(error, prediction, ps, NamedTuple())) ≈ expected_variance
+
+    gradient = Zygote.gradient(raw ->
+        logpdf(make_dist(error, prediction, (σ = [raw],)), observation), raw_sigma)[1]
+    @test isfinite(gradient)
+    @test_throws DomainError make_dist(error, [0.0, 1.0], ps)
 end

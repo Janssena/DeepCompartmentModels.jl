@@ -70,8 +70,11 @@ function solve_for_target(
     return _take_target(sol, individual, dcm.target)
 end
 
-SciMLBase.solve(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual, ps::NamedTuple; kwargs...) = 
+SciMLBase.solve(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual, ps::NamedTuple; kwargs...) =
     solve(prob, individual, ps.theta; kwargs...)
+
+Base.show(io::IO, dcm::DeepCompartmentModel{<:UniversalDiffEq}) =
+    print(io, "DeepCompartmentModel{ude = $(nameof(typeof(dcm.problem.type))), error = $(dcm.error)}")
 
 function Base.summary(io::IO, ude::UniversalDiffEq)
     type_color, no_color = SciMLBase.get_colorizers(io)
