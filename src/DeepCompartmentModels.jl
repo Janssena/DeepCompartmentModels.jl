@@ -20,7 +20,6 @@ using Reexport
 @reexport using Static
 @reexport using Distributions
 @reexport using OrdinaryDiffEq
-@reexport using DistributionsAD
 @reexport using SciMLSensitivity
 
 # Extend the StatsAPI `fit` generic re-exported by Distributions.

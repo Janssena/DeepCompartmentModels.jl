@@ -128,6 +128,22 @@ function predict_de_parameters(dcm::DeepCompartmentModel, data::D, ps::NamedTupl
 end
 
 
+"""
+    predict(model, data, ps, st; individual, target, kwargs...)
+
+Solve the model and return predicted observations.
+
+## Arguments
+- `model`: An `AbstractDEModel`.
+- `data`: A `Population` or `AbstractIndividual`.
+- `ps`: Model parameters.
+- `st`: Model state.
+
+## Keyword Arguments
+- `individual=true`: When `true` uses per-individual random effects from `ps.phi`.
+  Set to `false` to predict at the typical (population-level) parameters.
+- `target=true`: Return only the target compartment(s). Set to `false` for all compartments.
+"""
 function predict(dcm::AbstractDEModel, data, ps, st; individual = true, target = true, kwargs...)
     if individual
         ps_local = ps

@@ -52,7 +52,7 @@ function setup(::FixedObjective, rng::Random.AbstractRNG, model::AbstractModel, 
     ps_theta, st_theta = setup(rng, model)
 
     ps = (
-        theta = ps_theta, 
+        theta = ps_theta,
     )
     if !(model.error isa ImplicitError)
         ps_error = setup(model.error, init_sigma)
