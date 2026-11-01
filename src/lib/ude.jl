@@ -17,11 +17,11 @@ end
 
 _empty_de(args...; kwargs...) = nothing
 
-# TODO: Make extendible so that we can use the solve and solve_for_target defined here in all cases
+# TODO: Make extendable so that we can use the solve and solve_for_target defined here in all cases
 function build_problem(ude::UniversalDiffEq{P}, model::Lux.AbstractLuxLayer, ps, st::NamedTuple) where P<:SciMLBase.AbstractODEProblem
-    stateful = Lux.StatefulLuxLayer{true}(model, nothing, st.theta)
-    dudt(u, p, t; model = stateful) = ude(model, u, p, t)
-    return remake(ude.problem, f = dudt), ps
+    stateful = Lux.StatefulLuxLayer{true}(model, nothing, st) # Expect the user to call with st.theta (the correct st key)
+    dudt(args...; model = stateful) = ude(model, args...)
+    return remake(ude.problem, f = dudt)
 end
 
 (::UniversalDiffEq{P,T})(model, u, p, t) where {P,T<:BasicUDE} = [p.I; zeros(eltype(u), length(u) - 1)] .+ model(u, p)

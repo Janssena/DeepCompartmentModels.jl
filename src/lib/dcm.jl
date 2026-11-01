@@ -117,10 +117,10 @@ function predict_typ_parameters(dcm::DeepCompartmentModel, population::Populatio
     return ζ, st_local
 end
 
-predict_de_parameters(dcm::DeepCompartmentModel, data::D, ps::Union{<:NamedTuple{(:theta,)},<:NamedTuple{(:theta,:error)}}, st) where D<:Union{<:AbstractIndividual, Population{<:AbstractIndividual}} = 
+predict_de_parameters(dcm::DeepCompartmentModel{P,M}, data::D, ps::Union{<:NamedTuple{(:theta,)},<:NamedTuple{(:theta,:error)}}, st) where {P,M,D<:Union{<:AbstractIndividual, Population{<:AbstractIndividual}}} = 
     predict_typ_parameters(dcm, data, ps, st)
 
-function predict_de_parameters(dcm::DeepCompartmentModel, data::D, ps::NamedTuple{(:theta,:error,:omega,:phi)}, st) where D<:Union{<:AbstractIndividual, Population{<:AbstractIndividual}}
+function predict_de_parameters(dcm::DeepCompartmentModel{P,M}, data::D, ps::NamedTuple{(:theta,:error,:omega,:phi)}, st) where {P,M,D<:Union{<:AbstractIndividual, Population{<:AbstractIndividual}}}
     ζ, st_theta = predict_typ_parameters(dcm, data, ps, st)
     η = get_random_effects(ps, st)
     z = ζ .* exp.(η)

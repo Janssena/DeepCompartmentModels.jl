@@ -132,7 +132,7 @@ L = ∑ᵢ logpdf(yᵢ | M)
 - `ps`: Model parameters. Contains all learnable parameters.
 - `st`: Model state. Contains additional parameters which are deemed constant when calculating gradients.
 """
-function Distributions.loglikelihood(model::AbstractDEModel{<:SciMLBase.AbstractDEProblem}, data::D, ps::NamedTuple, st::NamedTuple; kwargs...) where D<:Union{<:Population, <:AbstractIndividual}
+function Distributions.loglikelihood(model::AbstractDEModel{P,M}, data::D, ps::NamedTuple, st::NamedTuple; kwargs...) where {P,M,D<:Union{<:Population, <:AbstractIndividual}}
     z, _ = predict_de_parameters(model, data, ps, st)
     return loglikelihood(model, data, z, ps; kwargs...)
 end
