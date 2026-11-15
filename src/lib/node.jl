@@ -58,7 +58,6 @@ forward_ode_with_dv(model::NeuralODE{T,P,M,E,S}, population::Population, ps::Com
     forward_ode_with_dv.((model, ), population, (ps, ); kwargs...)
 
 function forward_ode_with_dv(model::NeuralODE{T,P,M,E,S}, individual::AbstractIndividual, ps::ComponentVector; sensealg = model.sensealg, kwargs...) where {T,P,M,E,S}
-    @ignore_derivatives ps.I = zero(eltype(ps))
     return Array(
         forward_ode(model.problem, individual, ps; sensealg, force_dtmin = true, kwargs...)
     )[model.target, :]

@@ -17,17 +17,24 @@ end
 
 _empty_de(args...; kwargs...) = nothing
 
-# TODO: Make extendable so that we can use the solve and solve_for_target defined here in all cases
-function build_problem(ude::UniversalDiffEq{P}, model::Lux.AbstractLuxLayer, ps, st::NamedTuple) where P<:SciMLBase.AbstractODEProblem
-    stateful = Lux.StatefulLuxLayer{true}(model, nothing, st) # Expect the user to call with st.theta (the correct st key)
+"""
+    build_problem(ude::UniversalDiffEq, model, st) -> AbstractDEProblem
+
+Wraps `model` (with layer state `st`) in a `Lux.StatefulLuxLayer` and returns a copy of
+`ude.problem` whose right-hand side calls the `UniversalDiffEq` functor
+`ude(model, args...)`. Packages that add new `AbstractUDEType`s can extend this method
+for their own `UniversalDiffEq{P,<:MyType}`.
+
+`st` is the Lux state of `model`, i.e. `st.theta` when working with the output of `setup`.
+`solve` and `solve_for_target` accept the full state returned by `setup` as well and
+select the `theta` entry using `_layer_state`.
+"""
+function build_problem(ude::UniversalDiffEq, model::Lux.AbstractLuxLayer, st::NamedTuple)
+    stateful = Lux.StatefulLuxLayer{true}(model, nothing, st)
     dudt(args...; model = stateful) = ude(model, args...)
     return remake(ude.problem, f = dudt)
 end
 
-<<<<<<< Updated upstream
-(::UniversalDiffEq{P,T})(model, u, p, t) where {P,T<:BasicUDE} = [p.I; zeros(eltype(u), length(u) - 1)] .+ model(u, p)
-(::UniversalDiffEq{P,T})(model, u, p, t) where {P,T<:TimeConcatUDE} = [p.I; zeros(eltype(u), length(u) - 1)] .+ model(_concat(u, t), p)
-=======
 # For UDEs the neural network is part of the right-hand side, so the number of parameters is
 # typically much larger. In a micro benchmark (one-compartment UDE, 8 individuals, Float32) forward
 # sensitivities and adjoints were equally fast at ~320 parameters; the adjoint was ~5x faster at ~1,150
@@ -68,7 +75,6 @@ function (::UniversalDiffEq{P,T})(model, du, u, p, t) where {P,T<:TimeConcatUDE}
     du[1] += p.I
     return nothing
 end
->>>>>>> Stashed changes
 
  # TODO: versions for images
 _concat(u::Union{Real, AbstractVector}, t::Real) = [u; t]
@@ -80,7 +86,7 @@ function SciMLBase.solve(
         st::NamedTuple; 
         kwargs...
     )
-    prob = build_problem(dcm.problem, dcm.model, st)
+    prob = build_problem(dcm.problem, dcm.model, _layer_state(st))
     return solve(prob, individual, ps; kwargs...) 
 end
 
@@ -108,14 +114,11 @@ function solve_for_target(
         sensealg = dcm.sensealg,
         kwargs...
     )
-    prob = build_problem(dcm.problem, dcm.model, st)
+    prob = build_problem(dcm.problem, dcm.model, _layer_state(st))
     sol = solve(prob, individual, ps; sensealg, kwargs...)
     return _take_target(sol, individual, dcm.target)
 end
 
-<<<<<<< Updated upstream
-SciMLBase.solve(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual, ps::NamedTuple; kwargs...) = 
-=======
 """
     predict(dcm::DeepCompartmentModel{<:UniversalDiffEq}, data, ps, st; target = true, kwargs...)
 
@@ -129,7 +132,6 @@ function predict(dcm::DeepCompartmentModel{<:UniversalDiffEq}, data, ps, st; tar
 end
 
 SciMLBase.solve(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual, ps::NamedTuple; kwargs...) =
->>>>>>> Stashed changes
     solve(prob, individual, ps.theta; kwargs...)
 
 function Base.summary(io::IO, ude::UniversalDiffEq)

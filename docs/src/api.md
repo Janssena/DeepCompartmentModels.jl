@@ -138,6 +138,8 @@ fit(::AbstractObjective, ::AbstractDEModel, ::Population, ::Optimisers.AbstractR
 update_state
 setup
 gradient
+value_and_gradient
+create_batches
 ```
 
 | function | description |
@@ -146,7 +148,6 @@ gradient
 | `setup_phi(objective, rng, model, population, Ω; ...)` | initial variational posteriors and sampling state |
 | `get_random_effects(ps, st)` | random effects of all individuals as an `n_params × n_individuals` matrix |
 | `update_epsilon!(rng, st)` | resample the noise used to draw from the variational posteriors, in place |
-| `create_batches(population, batchsize)` | random mini-batches of indices |
 | `m_step(objective, rng, model, population, ps, st; epochs, num_samples, verbose)` | update the residual error and `Ω` from the variational posteriors |
 | `optimise_omega(ps)` | `Ω` implied by the variational posteriors |
 | `optimise_residual_error(...)` | optimise the residual error parameters with the posteriors fixed |

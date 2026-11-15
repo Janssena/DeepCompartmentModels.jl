@@ -1,33 +1,40 @@
-################################################################################
-##########                             fit                             ##########
-################################################################################
+import Distributions: fit
 
 default_callback(epoch, loss) = println("Epoch $epoch, loss = $loss")
 
 """
-<<<<<<< Updated upstream
-    fit(obj, model, data, opt; epochs, callback, kwargs...)
-    fit(obj, model, data, opt, ps, st; epochs, callback, kwargs...)
-    fit(obj, model, data, opt_state, ps, st; epochs, callback, kwargs...)
-=======
     fit(obj, model, population, opt; rng, T, epochs, callback, parallel, batchsize, nbatch, init_sigma, params, ...)
     fit(obj, model, population, opt, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
     fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
->>>>>>> Stashed changes
 
-Optimise `model` parameters by minimising `obj` on `data` using optimizer `opt`.
+Optimise the parameters of `model` by minimising `obj` on `population` with the optimiser `opt`.
+Each epoch is one gradient step on the whole population. `fit` is a thin wrapper around
+`setup`, `gradient` and `Optimisers.update`:
 
-When `ps` and `st` are not provided they are initialised via `setup`. When an
-`Optimisers.AbstractRule` is provided instead of an `opt_state`, the optimiser
-state is initialised from the rule and `ps`.
+```julia
+ps, st = setup(obj, rng, model)
+opt_state = Optimisers.setup(opt, ps)
+for epoch in 1:epochs
+    st = update_state(rng, st, obj, model, population, ps) # only does something for VariationalELBO
+    ∇ = gradient(obj, model, population, ps, st; parallel, batchsize, nbatch, rng)
+    opt_state, ps = Optimisers.update(opt_state, ps, ∇)
+end
+```
+
+When `ps` and `st` are not provided they are created with `setup` (using `rng`). Passing `ps` and
+`st` allows continuing a previous fit. Instead of an optimiser rule (e.g. `Optimisers.Adam(1e-3)`)
+a previously returned `opt_state` can be passed.
+
+Supported objectives are the fixed effect objectives (`MSE`, `SSE`, `LogLikelihood`) and
+`VariationalELBO` (without `natural = true`). Models with a `UniversalDiffEq` only support the
+fixed effect objectives.
 
 ## Arguments
-- `obj`: Objective function (e.g. `SSE()`, `LogLikelihood()`, `VariationalELBO(...)`).
-- `model`: An `AbstractModel` (e.g. `DCM`, `SNN`, `UniversalDiffEq`).
-- `data`: A `Population` or `AbstractIndividual`.
-- `opt`: An `Optimisers.AbstractRule` (e.g. `Adam(1e-3)`) or pre-built optimiser state.
-- `ps`: Model parameters returned by `setup`.
-- `st`: Model state returned by `setup`.
+- `obj`: Objective, e.g. `SSE()`, `LogLikelihood()`, `VariationalELBO(idxs)`.
+- `model`: A `DeepCompartmentModel`.
+- `population`: A `Population`.
+- `opt`: An `Optimisers.AbstractRule` or an optimiser state returned by an earlier call.
+- `ps`, `st`: Parameters and state as returned by `setup`.
 
 ## Keyword arguments
 - `epochs = 100`: Number of gradient steps.
@@ -49,45 +56,15 @@ state is initialised from the rule and `ps`.
 Any other keyword throws an `ArgumentError`.
 
 ## Returns
-`(opt_state, ps, st)` — the final optimiser state, parameters, and model state.
+`(opt_state, ps, st)`. When interrupted (Ctrl-C) the current state is returned.
 
 ## Example
 ```julia
-obj = SSE()
-model = DCM(two_comp!, ann)
-opt = Adam(1e-3)
-opt_state, ps, st = fit(obj, model, population, opt; epochs=500)
+dcm = DeepCompartmentModel(UniversalDiffEq(1), Lux.Chain(Lux.Dense(1, 16, tanh), Lux.Dense(16, 1)))
+opt_state, ps, st = fit(SSE(), dcm, population, Optimisers.Adam(3f-3); epochs = 500)
+predict(dcm, population[1], ps, st)
 ```
 """
-<<<<<<< Updated upstream
-function fit(obj::AbstractObjective, model, data, opt::Optimisers.AbstractRule; kwargs...)
-    ps, st = setup(obj, model)
-    opt_state = Optimisers.setup(opt, ps)
-    return fit(obj, model, data, opt_state, ps, st; kwargs...)
-end
-
-function fit(obj::AbstractObjective, model, data, opt::Optimisers.AbstractRule, ps, st; kwargs...)
-    opt_state = Optimisers.setup(opt, ps)
-    return fit(obj, model, data, opt_state, ps, st; kwargs...)
-end
-
-function fit(obj::AbstractObjective, model, data, opt_state::NamedTuple, ps, st; epochs = 100, callback = default_callback, kwargs...)
-    _pre_compile_gradient(obj, model, data, ps, st; kwargs...)
-    return _run_optimization(obj, model, data, opt_state, ps, st; epochs, callback, kwargs...)
-end
-
-function _pre_compile_gradient(obj, model, data, ps, st; kwargs...)
-    data_batch, ps_batch, st_batch = take_batch([1], data, ps, st)
-    printstyled("[ Info:", color=:cyan); print(" Compiling gradient...");
-    st_batch = update_state(st_batch, obj, model, data_batch, ps_batch; kwargs...)
-    Zygote.withgradient(p -> objective(obj, model, data_batch, p, st_batch), ps_batch)
-    println(" Done! Starting optimization...")
-    nothing
-end
-
-function _run_optimization(obj, model, data, opt_state, ps, st; epochs, callback, kwargs...)
-    try 
-=======
 function fit(
         obj::AbstractObjective, model::AbstractDEModel, population::Population, opt::Optimisers.AbstractRule;
         rng::Random.AbstractRNG = Random.default_rng(), T::Type{<:Real} = Float32, epochs = 100, callback = default_callback,
@@ -139,12 +116,11 @@ _setup_for_fit(obj::MixedObjective, rng, model, population, ::Type{T}; kwargs...
 
 function _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
     try
->>>>>>> Stashed changes
         for epoch in 1:epochs
-            opt_state, st = update_state(opt_state, st, obj, model, data, ps; kwargs...)
-            loss, ∇ = Zygote.withgradient(p -> objective(obj, model, data, p, st), ps)
+            st = update_state(rng, st, obj, model, population, ps)
+            loss, ∇ = value_and_gradient(obj, model, population, ps, st; parallel, batchsize, nbatch, rng)
             callback(epoch, loss)
-            opt_state, ps = Optimisers.update(opt_state, ps, first(∇))
+            opt_state, ps = Optimisers.update(opt_state, ps, ∇)
             ensure_posdef_phi!(obj, ps)
         end
 
@@ -154,24 +130,22 @@ function _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, 
             println()
             @info "User interrupted, gracefully exiting optimization..."
             return opt_state, ps, st
-        else 
-            if obj isa VariationalELBO && !_phis_are_valid(constrain(model, ps).phi)
-                @error "Some of the Variational posteriors are not positive definite or have variances close to zero. This can mean that the posterior of one or more random-effects are shrinking to zero for some Individuals. Reducing the learning rate can help to address this issue."
-                return nothing
-            else
-                throw(e) # Would be nice to have this send a more user friendly message.
-            end
+        elseif obj isa VariationalELBO && !_phis_are_valid(ps.phi)
+            @error "Some of the variational posteriors are not positive definite or have variances close to zero. This can mean that the posterior of one or more random effects is shrinking to zero for some individuals. Reducing the learning rate can help to address this issue."
+            return nothing
+        else
+            rethrow()
         end
     end
 end
 
 _phis_are_valid(phi::NamedTuple) = true
-_phis_are_valid(phi::NamedTuple{(:μ,:L), <:Any}) = 
+_phis_are_valid(phi::NamedTuple{(:μ,:L), <:Any}) =
     all(map(L -> isposdef(L * L') && det(L * L') > 0, phi.L))
 
-
+# In some cases the diagonals of the Cholesky factors of the variational posteriors become negative.
 ensure_posdef_phi!(::AbstractObjective, ps) = nothing
-function ensure_posdef_phi!(::VariationalELBO, ps) # In some cases the diagonals of the variational posterior Ls will be negative, this should not be the case.
+function ensure_posdef_phi!(::VariationalELBO, ps)
     if :L in keys(ps.phi)
         for i in eachindex(ps.phi.L)
             if any(diag(ps.phi.L[i]) .< 0)
@@ -179,117 +153,32 @@ function ensure_posdef_phi!(::VariationalELBO, ps) # In some cases the diagonals
             end
         end
     end
-    
+
     return nothing
 end
-
-# function _run_optimization_stochastic(obj, model, data::Population, opt_state, ps, st; M::Int = Int(round(length(data) * 0.25)), epochs, callback, kwargs...)
-#     try 
-#         for epoch in 1:epochs
-#             idxs = rand(eachindex(data), M)
-#             data_batch, ps_batch, st_batch = take_batch(idxs, data, ps, st)
-#             opt_state, st_batch = update_state(opt_state, st_batch, obj, model, data, ps; kwargs...)
-#             # TODO: translate this gradient into the full gradient
-#             loss, ∇ = Zygote.withgradient(p -> objective(obj, model, data_batch, p, st_batch), ps_batch)
-#             callback(epoch, loss)
-#             opt_state, ps = Optimisers.update(opt_state, ps, first(∇))
-#         end
-
-#         return opt_state, ps, st
-#     catch e
-#         if e isa InterruptException
-#             println()
-#             @info "User interrupted, gracefully exiting optimization..."
-#             return opt_state, ps, st
-#         else 
-#             throw(e)
-#         end
-#     end
-# end
-
-################################################################################
-##########                     Minibatch training                     ##########
-################################################################################
-
-function create_batches(M::Int, n::Int)
-    batches = [collect(i:M:n) for i in 1:M]
-    idxs = Random.shuffle(1:n)
-    return map(Base.Fix1(getindex, idxs), batches) # randomize indexes in each batch
-end
-
-create_batches(M::Int, population::Population) = create_batches(M, length(population))
-
-function take_batch(idxs::AbstractVector{<:Int}, population::Population, ps, st)
-    ps_new, st_new = ps, st
-
-    if :phi in keys(ps) && :phi in keys(st)
-        ps_new = merge(ps, (phi = _take_batch_from_phi(idxs, ps.phi), ))
-        st_new = merge(st, (phi = _take_batch_from_phi(idxs, st.phi), ))
-    end
-
-    return population[idxs], ps_new, st_new
-end
-
-# When phi is from the parameters
-_take_batch_from_phi(_, phi::@NamedTuple{}) = phi # FO and FOCE
-_take_batch_from_phi(idxs, phi::NamedTuple{<:Any,<:Tuple{<:AbstractVector,<:AbstractVector}}) = 
-    NamedTuple{keys(phi)}(map(Base.Fix2(getindex, idxs), values(phi))) # Variational Inference
-
-# When phi is from the state
-_take_batch_from_phi(idxs, phi::NamedTuple{(:mask,:eta),<:Tuple{<:AbstractVector{<:Real},<:AbstractMatrix}}) = 
-    (mask = phi.mask, eta = phi.eta[idxs], )
-
-_take_batch_from_phi(idxs, phi::NamedTuple{(:mask,:eta),<:Tuple{<:AbstractMatrix{<:Real},<:AbstractMatrix}}) = 
-    (mask = phi.mask, eta = phi.eta[:, idxs], )
-
-_take_batch_from_phi(idxs, phi::NamedTuple{(:epsilon,:mask),<:Tuple{<:AbstractMatrix{<:Real},<:AbstractMatrix}}) = 
-    (epsilon = phi.epsilon[idxs, :], mask = phi.mask, )
-
-_take_batch_from_phi(idxs, phi::NamedTuple{(:epsilon,:mask),<:Tuple{<:AbstractArray{<:Real, 3},<:AbstractMatrix}}) = 
-    (epsilon = phi.epsilon[:, idxs, :], mask = phi.mask, )
-    
-# TODO: fit_batched # Here we thread over mini-batches of data
-
-# TODO: fit_stochastic # Here we take a random subsample of the data and train on only that. Check on how to do this with VI
 
 ################################################################################
 ##########                        update_state                        ##########
 ################################################################################
 
-update_state(st, ::AbstractObjective, model, data, ps; kwargs...) = st
-update_state(opt_state, st, obj::AbstractObjective, model, data, ps; kwargs...) = 
-    update_opt_state(opt_state, ps, data), update_state(st, obj, model, data, ps; kwargs...)
+"""
+    update_state([rng,] st, obj, model, population, ps)
 
-# Need to use a population here to make sure the shape of etas is correct for 
-# evaluation of the gradient. Also optimize_etas for populations uses constrain 
-# internally
-function update_state(st, ::FOCE, model, population::Population, ps)
-    etas = optimize_etas(model, population, ps, st)
-    return _etas_to_state(st, etas)
-end
-
-update_state(st, ::VariationalELBO, model, data, ps; num_samples = 1) = 
-    update_state_epsilon(st, num_samples)
-
-
-function update_opt_state(opt_state, ps, data)
-    update_opt_state!(opt_state, ps, data)
-    return opt_state
-end
-
-# TODO: remove when implementing natural gradients
-update_opt_state!(opt_state, ps, data) = nothing
-
-update_state(::VariationalELBO, st, num_samples = 1) = update_state_epsilon(st, num_samples)
+Hook for objectives that need to change the state every epoch. Returns the new state. Only does
+something for `VariationalELBO`, where the noise `ϵ` used for the reparameterisation of the variational
+posteriors is resampled using `rng` (default `Random.default_rng()`). `st` itself is not modified.
+"""
+update_state(rng::Random.AbstractRNG, st, ::AbstractObjective, model, population, ps; kwargs...) = st
+update_state(rng::Random.AbstractRNG, st, ::VariationalELBO, model, population, ps; kwargs...) = update_state_epsilon(rng, st)
+update_state(st, obj::AbstractObjective, model, population, ps; kwargs...) =
+    update_state(Random.default_rng(), st, obj, model, population, ps; kwargs...)
 
 """
-    update_state_epsilon(rng, st; n)
+    update_state_epsilon([rng,] st)
 
-Sets each epsilon in st to `n` samples from N(0, I).
+Resamples each epsilon in `st` (the noise used for the reparameterisation of the variational posteriors) from N(0, I)
+using `rng`. Returns a new state, `st` is not modified.
 """
-function update_state_epsilon(st::NamedTuple, num_samples = 1) 
-    # TODO: what if epsilon is not the last element in keypath here?
-    return fmapstructure_with_path(
-        (path, x) -> :epsilon in path ? randn(Random.GLOBAL_RNG, eltype(x), size(x)[begin:end-1]..., num_samples) : x, st; cache = nothing)
-        # (path, x) -> :epsilon in path ? _randn_epsilon(x, num_samples) : x, st; cache = nothing)
-end
+update_state_epsilon(rng::Random.AbstractRNG, st::NamedTuple) = fmapstructure_with_path(
+    (path, x) -> :epsilon in path ? randn(rng, eltype(x), size(x)) : x, st; cache = nothing)
+update_state_epsilon(st::NamedTuple) = update_state_epsilon(Random.default_rng(), st)

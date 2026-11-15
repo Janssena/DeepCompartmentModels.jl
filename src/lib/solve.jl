@@ -26,13 +26,11 @@ function SciMLBase.solve(
         kwargs...
     ) where {T,O<:Nothing}
     prob = _remake_prob(problem, individual, saveat, z)
-    interpolate && _set_save_positions!(individual.callback, true)
-    sol = SciMLBase.solve(prob, solver;
-        saveat = interpolate ? empty(saveat) : saveat, callback = individual.callback, 
+    callback = _solve_callback(individual.callback, interpolate)
+    return SciMLBase.solve(prob, solver;
+        saveat = interpolate ? empty(saveat) : saveat, callback, 
         tstops = _get_tstops(individual.callback), kwargs...
     )
-    interpolate && _set_save_positions!(individual.callback, false)
-    return sol
 end
 
 function SciMLBase.solve(
@@ -45,7 +43,7 @@ function SciMLBase.solve(
         kwargs...
     ) where {T,O<:AbstractVector{<:Pair}}
 
-    interpolate && _set_save_positions!(individual.callback, true)
+    callback = _solve_callback(individual.callback, interpolate)
     tstops = _get_tstops(individual.callback)
     sols = map(individual.occasions) do occ
         saveat_occ = filter(Base.Fix2(_within_occ, occ), saveat)
@@ -53,11 +51,10 @@ function SciMLBase.solve(
         _problem = remake(problem, tspan = (occ.first - T(0.1), problem.tspan[2]))
         prob = _remake_prob(_problem, individual, saveat_occ, z)
         return SciMLBase.solve(prob, solver;
-            saveat = interpolate ? empty(saveat_occ) : saveat_occ, callback = individual.callback, 
+            saveat = interpolate ? empty(saveat_occ) : saveat_occ, callback, 
             tstops = tstops_occ, kwargs...
         )
     end
-    interpolate && _set_save_positions!(individual.callback, false)
     return sols
 end
 
@@ -76,11 +73,19 @@ function _remake_prob(prob::SciMLBase.AbstractDEProblem, individual::AbstractInd
     return remake(prob, u0 = T.(u0), tspan = (T(prob.tspan[1]), T(maximum(saveat))), p = p)
 end
 
-_set_save_positions!(callback::DiscreteCallback, value::Bool) = 
-    @ignore_derivatives callback.save_positions .= value
+# When interpolating, the solution has to be saved at the callback events. We return a modified
+# copy instead of changing `save_positions` on the callback of the individual, since that object
+# is shared between solves (and threads).
+_solve_callback(callback, interpolate::Bool) = 
+    interpolate ? _with_save_positions(callback, true) : callback
 
-_set_save_positions!(callbacks::CallbackSet, value::Bool) = 
-    map(Base.Fix2(_set_save_positions!, value), callbacks.discrete_callbacks)
+_with_save_positions(callback::DiscreteCallback, value::Bool) = 
+    Accessors.@set callback.save_positions = BitArray([value, value])
+
+_with_save_positions(callbacks::CallbackSet, value::Bool) = 
+    CallbackSet(callbacks.continuous_callbacks, map(Base.Fix2(_with_save_positions, value), callbacks.discrete_callbacks))
+
+@non_differentiable _solve_callback(::Any, ::Any)
 
 _get_u0(prob_u0::AbstractVector{T}, individual_u0::AbstractVector{T}) where T<:Real = 
     !isempty(individual_u0) ? individual_u0 : prob_u0
@@ -125,8 +130,11 @@ If the DE parameters are ComponentArrays, they already contain an Intervention k
 initialised to zero. This is the case for UniversalDiffEq, since these take ComponentArrays as parameters.
 """
 function construct_p(z::ComponentArray{T}, ::AbstractIndividual) where T
-    @ignore_derivatives z.I = zero(T)
-    return z
+    # The callback mutates `p.I` during the solve. Work on a copy so that the parameters of the
+    # caller (and those of other individuals solved on other threads) are never modified.
+    p = copy(z)
+    @ignore_derivatives p.I = zero(T)
+    return p
 end
 
 """
