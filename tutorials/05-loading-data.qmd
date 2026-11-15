@@ -1,0 +1,168 @@
+---
+title: "Loading data and dosing events"
+subtitle: "From NONMEM-style tables to Individuals and Populations"
+format:
+  html:
+    toc: true
+    code-fold: false
+jupyter: julia-1.10
+---
+
+Everything in the package operates on a `Population` of `Individual`s. An individual
+holds four things:
+
+| field | meaning |
+|:--|:--|
+| `id` | an integer or string label |
+| `x` | the covariates, a vector (static over time) |
+| `t`, `y` | observation times and observed values |
+| `callback` | the *dosing events*, an ODE-solver callback |
+
+The first three are plain arrays. The interesting one is the callback, so this tutorial
+starts there and then builds populations from the two datasets in the repository's
+`data/` folder, which have very different dosing designs.
+
+```{julia}
+using DeepCompartmentModels
+using DataFrames, CSV
+using CairoMakie
+
+datadir = joinpath(@__DIR__, "..", "data")
+nothing # hide
+```
+
+## Dosing callbacks
+
+Drug enters the ODE system as an *infusion rate* `I`, which is the last element of the
+parameter vector the ODE function receives (this is why the built-in ODEs unpack
+`..., I = p`). A dose of `amt` given over `duration` is the rate `amt / duration`
+during the infusion and `0` otherwise. `generate_dosing_callback` turns a table of dosing
+events into a callback that switches that rate on and off at the right times.
+
+Each row of the table is one dose. With two columns, `[time amount]`, every dose is a
+bolus, modelled as a very short infusion (by default one minute, with times in hours).
+With four columns, `[time amount rate duration]`, the infusion is given explicitly.
+
+```{julia}
+bolus = generate_dosing_callback([0.0 100.0])
+infusion = generate_dosing_callback([0.0 100.0 50.0 2.0])      # 100 mg at 50 mg/h for 2 h
+repeated = generate_dosing_callback([0.0 100.0; 12.0 100.0; 24.0 100.0])   # three boluses
+nothing # hide
+```
+
+To see what a callback does we can solve a one-compartment model for a given individual.
+`solve(model, individual, z)` takes the ODE parameters `z` (here `[CL, V]`):
+
+```{julia}
+model = DCM(one_comp!, 1, Lux.Dense(1 => 2))   # the network is not used when we pass z ourselves
+z = Float32[5, 30]                              # CL = 5 L/h, V = 30 L
+grid = Float32.(0:0.1:36)
+
+fig = Figure(size = (800, 280))
+for (j, (name, cb)) in enumerate(["bolus" => bolus, "2 h infusion" => infusion, "3 boluses" => repeated])
+    indv = Individual(1, [70f0], grid, zeros(Float32, length(grid)), cb)
+    sol = solve(model, indv, z; saveat = grid, dt = 0.01f0)
+    ax = Axis(fig[1, j]; title = name, xlabel = "Time (h)", ylabel = j == 1 ? "mg/L" : "")
+    lines!(ax, grid, Array(sol)[1, :])
+end
+fig
+```
+
+A few more options:
+
+- `generate_dosing_callback(A, T)` creates the callback in number type `T` (the default is
+  `Float32`). An `Individual` warns if its callback and data types differ.
+- `S1` scales all doses, for example to convert mg into the unit of the ODE state.
+- `bolus_duration` sets the length of the pseudo-infusion used for boluses.
+
+```{julia}
+generate_dosing_callback([0.0 100.0]; S1 = 1 / 1000)   # doses in mg, state in g
+nothing # hide
+```
+
+## One bolus per subject: warfarin
+
+The warfarin dataset has the usual NONMEM columns. Dose rows have `MDV = 1`, observation
+rows `MDV = 0`, and `DVID` tells the two measured responses apart (1 is the plasma
+concentration, 2 a pharmacodynamic effect). We only use the concentrations here.
+
+```{julia}
+warfarin = DataFrame(CSV.File(joinpath(datadir, "warfarin.csv")))
+select(first(warfarin, 3), :ID, :TIME, :WEIGHT, :AGE, :SEX, :DOSE, :RATE, :DURATION, :DV, :MDV)
+```
+
+One individual is one `ID` group. The dose matrix comes from the rows with `MDV == 1`
+and the observations from the rows with `MDV == 0`:
+
+```{julia}
+function warfarin_individual(g)
+    covariates = Float32[g.WEIGHT[1], g.AGE[1], g.SEX[1]]
+    doses = Matrix{Float32}(g[g.MDV .== 1, [:TIME, :DOSE, :RATE, :DURATION]])
+    obs = g[g.MDV .== 0, :]
+    return Individual(g.ID[1], covariates, obs.TIME, obs.DV, generate_dosing_callback(doses))
+end
+
+pk = warfarin[warfarin.DVID .== 1, :]
+warfarin_pop = Population([warfarin_individual(g) for g in groupby(pk, :ID)])
+length(warfarin_pop), get_x(warfarin_pop)[:, 1:3]
+```
+
+`get_x(population)` stacks the covariates into a matrix with one column per individual, which is
+what the network receives. `get_t` and `get_y` return vectors with the times and observations
+of each individual.
+
+## Many infusions per subject: tobramycin
+
+In the tobramycin data every dose is an `EVID = 1` row, patients receive dozens of
+doses, and there is no rate column. We assume 30-minute infusions, which is common for
+this drug; a dataset with a `RATE` or `DURATION` column would use those instead.
+
+```{julia}
+tobramycin = DataFrame(CSV.File(joinpath(datadir, "tobramycin.csv")))
+select(tobramycin[tobramycin.ID .== 1, :][[1, 2, 3, 34, 35], :], :ID, :TIME, :CP, :EVID, :DOSE, :WT, :AGE, :SEX, :CLCR)
+```
+
+```{julia}
+function tobramycin_individual(g; infusion_hours = 0.5f0)
+    dose_rows = g[g.EVID .== 1, :]
+    doses = Float32[dose_rows.TIME dose_rows.DOSE dose_rows.DOSE ./ infusion_hours fill(infusion_hours, nrow(dose_rows))]
+    obs = g[g.EVID .== 0, :]
+    covariates = Float32[g.WT[1], g.AGE[1], g.SEX[1], g.CLCR[1]]
+    return Individual(g.ID[1], covariates, obs.TIME, obs.CP, generate_dosing_callback(doses))
+end
+
+tobramycin_pop = Population([tobramycin_individual(g) for g in groupby(tobramycin, :ID)])
+length(tobramycin_pop), sum(length.(get_y(tobramycin_pop)))
+```
+
+Predicting for one patient with a typical parameter set shows the accumulation over
+the repeated infusions:
+
+```{julia}
+tobra_model = DCM(one_comp!, 1, Lux.Dense(1 => 2))
+indv = tobramycin_pop[1]
+grid = Float32.(range(0, maximum(get_t(indv)); length = 600))
+sol = solve(tobra_model, indv, Float32[3.5, 20]; saveat = grid, dt = 0.01f0)    # CL = 3.5 L/h, V = 20 L
+
+fig = Figure(size = (800, 300))
+ax = Axis(fig[1, 1]; xlabel = "Time (h)", ylabel = "Tobramycin (mg/L)")
+lines!(ax, grid, Array(sol)[1, :])
+scatter!(ax, get_t(indv), get_y(indv); color = :black)
+fig
+```
+
+::: {.callout-note}
+Data types must match: `Population` requires all individuals to have the same concrete
+type, which means the same number type, id type and callback type. Building every
+individual with the same helper function, as above, takes care of that.
+:::
+
+## Checklist
+
+- Dose and observation rows are separated (`MDV` or `EVID`), and observations that are
+  `missing` are dropped.
+- Times are in the same unit as the ODE's rate constants (hours throughout these tutorials).
+- Doses are in the unit of the ODE state. Use `S1` or convert them yourself.
+- Covariates are numeric. Categorical ones such as `SEX` need to be encoded first.
+- Covariates are a fixed vector per individual. A different covariate per time point
+  needs a `TimeVariableIndividual`, see [Status and limitations](../limitations.md).

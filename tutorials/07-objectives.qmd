@@ -1,0 +1,180 @@
+---
+title: "Objectives, error models and parameter structure"
+subtitle: "What SSE, MSE, LogLikelihood and VariationalELBO change about the model parameters"
+format:
+  html:
+    toc: true
+    code-fold: false
+jupyter: julia-1.10
+---
+
+The objective decides what the parameters `ps` and state `st` of a model look like, and
+`setup(objective, rng, model, ...)` builds them accordingly. This page shows the four
+objectives side by side on the theophylline data, together with the residual error models
+that the likelihood-based ones need.
+
+```{julia}
+using DeepCompartmentModels
+using DataFrames, CSV
+using CairoMakie
+using Random
+using LinearAlgebra: diag
+
+df = DataFrame(CSV.File(joinpath(@__DIR__, "..", "data", "theophylline.csv")))
+population = Population([begin
+    obs = g[.!ismissing.(g.DV), :]
+    cb = generate_dosing_callback([0.0 g.AMT[1] * g.WEIGHT[1]])
+    Individual(g.ID[1], [g.WEIGHT[1]], obs.TIME, obs.DV, cb)
+end for g in groupby(df, :ID)])
+
+ann = Lux.Chain(
+    Normalize([100f0]), Lux.Dense(1, 8, tanh), Lux.Dense(8, 3, Lux.softplus),
+    Lux.WrappedFunction(x -> x .* Float32[1, 3, 30]),
+)
+problem = ODEProblem(one_comp_abs!, zeros(Float32, 2), (-0.1f0, 1f0); dt = 0.01f0)
+rng = Random.Xoshiro(1)
+nothing # hide
+```
+
+## Fixed-effects objectives: SSE and MSE
+
+`SSE()` and `MSE()` need no error model. The parameters contain only the network:
+
+```{julia}
+model = DCM(problem, ann; target = 2)
+ps_sse, st_sse = setup(SSE(), rng, model)
+keys(ps_sse), keys(st_sse)
+```
+
+Objectives are callables that return a scalar to minimise:
+
+```{julia}
+SSE()(model, population, ps_sse, st_sse), MSE()(model, population, ps_sse, st_sse)
+```
+
+`SSE` sums the squared residuals over all observations and `MSE` averages them per
+individual first and then over the population. Both treat every observation as equally
+informative, which is only appropriate if the noise is roughly constant.
+
+## Residual error models
+
+A likelihood needs an assumption about the noise. The error models describe the
+standard deviation `σ` of an observation as a function of the prediction `ŷ`:
+
+| model | variance | parameters |
+|:--|:--|:--|
+| `AdditiveError(σ)` | `σ²` | 1 |
+| `ProportionalError(σ)` | `(σ ŷ)²` | 1 |
+| `CombinedError([σ₁, σ₂])` | `σ₁² + (σ₂ ŷ)²` | 2 |
+| `CombinedError([σ₁, σ₂]; dependent = true)` | `(σ₁ + σ₂ ŷ)²` | 2 |
+| `CustomError` | your own `var` method | any |
+
+The argument is the starting value. The parameters are stored on an unconstrained scale and
+passed through a softplus, so they stay positive during optimisation. `make_dist` turns a
+prediction into the distribution of the observations:
+
+```{julia}
+ŷ = Float32[0.5, 2, 8]
+errors = [AdditiveError(0.5f0), ProportionalError(0.2f0), CombinedError(Float32[0.3, 0.1])]
+ps_err = [setup(e, nothing) for e in errors]     # the initial parameters of each model
+
+DataFrame(
+    prediction = ŷ,
+    additive = sqrt.(diag(var(errors[1], ŷ, ps_err[1], NamedTuple()))),
+    proportional = sqrt.(diag(var(errors[2], ŷ, ps_err[2], NamedTuple()))),
+    combined = sqrt.(diag(var(errors[3], ŷ, ps_err[3], NamedTuple()))),
+)
+```
+
+```{julia}
+make_dist(errors[2], ŷ, ps_err[2])
+```
+
+## Fixed effects with a likelihood
+
+Give the model an error model and use `LogLikelihood()` to estimate the residual error
+together with the network. The parameters gain an `error` entry:
+
+```{julia}
+model_ll = DCM(problem, ann, ProportionalError(0.2f0); target = 2)
+ps_ll, st_ll = setup(LogLikelihood(), rng, model_ll)
+keys(ps_ll), ps_ll.error
+```
+
+The objective is the negative log-likelihood. We first fit the network by least squares,
+which gives a much better starting point than the random initialisation, and then
+continue with the likelihood. The residual error `σ` is then free to adapt:
+
+```{julia}
+function train(objective, model, population, ps, st; epochs, lr)
+    opt_state = Optimisers.setup(Optimisers.Adam(lr), ps)
+    losses = Float32[]
+    for _ in 1:epochs
+        ∇ = gradient(objective, model, population, ps, st)
+        opt_state, ps = Optimisers.update(opt_state, ps, ∇)
+        push!(losses, objective(model, population, ps, st))
+    end
+    return ps, losses
+end
+
+ps_pre, _ = train(SSE(), DCM(problem, ann; target = 2), population, ps_sse, st_sse; epochs = 150, lr = 0.02f0)
+ps_ll = merge(ps_ll, (theta = ps_pre.theta,))
+ps_ll, losses = train(LogLikelihood(), model_ll, population, ps_ll, st_ll; epochs = 100, lr = 0.01f0)
+(nll = losses[[1, end]], sigma = Lux.softplus.(ps_ll.error.σ))
+```
+
+The fitted `σ` is the estimated relative error of the proportional model. The negative
+log-likelihood decreased while the network and `σ` were learned together.
+
+## Random effects: the variational ELBO
+
+`VariationalELBO(idxs)` adds random effects on the parameters listed in `idxs`, as shown
+in the [mixed-effects tutorial](02-mixed-effects.md). It needs the population in `setup`,
+because there is one variational posterior per individual:
+
+```{julia}
+objective = VariationalELBO([1, 2, 3])
+ps_vi, st_vi = setup(objective, rng, model_ll, population)
+(parameters = keys(ps_vi), state = keys(st_vi), posterior = keys(ps_vi.phi))
+```
+
+| entry | meaning |
+|:--|:--|
+| `ps.theta`, `st.theta` | the network weights and its state |
+| `ps.error` | residual error parameters |
+| `ps.omega` | covariance of the random effects |
+| `ps.phi` | variational posterior per individual: means `μ` and Cholesky factors `L` |
+| `st.phi` | `epsilon` (noise for sampling) and `mask`, which maps the random effects in `idxs` onto the ODE parameters |
+
+The posterior and prior can be shaped with keyword arguments:
+
+```{julia}
+# a diagonal posterior per individual instead of a full covariance
+ps_mf, _ = setup(VariationalELBO([1, 2, 3]; mean_field = true), rng, model_ll, population)
+keys(ps_mf.phi), size(ps_mf.phi.σ[1])
+```
+
+```{julia}
+# random effects on clearance and volume only, with a different starting variance
+ps_cv, st_cv = setup(VariationalELBO([2, 3]), rng, model_ll, population; init_omega = [0.05, 0.2])
+ps_cv.omega
+```
+
+`setup` also takes `params = MeanVar()` to store the posterior covariances directly instead
+of as Cholesky factors (the default is `MeanSqrt()`), and `VariationalELBO` has options for the
+path-derivative gradient estimator (`path_deriv`) and for natural-gradient training
+(`natural`).
+
+::: {.callout-note}
+The element type of `ps` follows the `T` argument of `setup` (default `Float32`). Pass
+`Float64` for double precision, but note that individuals and their dosing callbacks must
+then be built with the same type.
+:::
+
+## Choosing an objective
+
+| situation | objective |
+|:--|:--|
+| quick fit, constant noise, no uncertainty needed | `SSE()` or `MSE()` |
+| noise depends on the concentration, or you need the residual error | `LogLikelihood()` with an error model |
+| inter-individual variability, individual predictions | `VariationalELBO(idxs)` |

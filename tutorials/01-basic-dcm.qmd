@@ -1,0 +1,199 @@
+---
+title: "A first Deep Compartment Model"
+subtitle: "Fitting a one-compartment model with a neural network to theophylline data"
+format:
+  html:
+    toc: true
+    code-fold: false
+jupyter: julia-1.10
+---
+
+A *deep compartment model* (DCM) keeps the structure of a classical pharmacokinetic
+model, a system of ODEs describing how a drug moves through the body, but lets a
+neural network predict the ODE parameters (clearance, volume, ...) from patient
+covariates. This tutorial walks through the whole loop on a small, classical dataset:
+
+1. build `Individual`s and a `Population` from a table,
+2. define the neural network and the model,
+3. fit it by minimising the sum of squared errors,
+4. look at the predictions.
+
+The data are the theophylline dataset: 12 subjects who each got a single oral dose and
+were sampled over 24 hours. The only covariate is body weight.
+
+## Setup
+
+```{julia}
+using DeepCompartmentModels   # also re-exports Lux, Optimisers, OrdinaryDiffEq, ...
+using DataFrames, CSV
+using CairoMakie
+using Random
+```
+
+## Data
+
+```{julia}
+df = DataFrame(CSV.File(joinpath(@__DIR__, "..", "data", "theophylline.csv")))
+first(df, 4)
+```
+
+Each subject has one dosing row (`DV` is `missing`) and a series of concentration
+measurements. `AMT` is the dose in mg/kg, so the dose in mg is `AMT * WEIGHT`.
+
+An `Individual` bundles the covariates `x`, the observation times `t`, the
+observations `y` and a *dosing callback* that tells the ODE solver when and how much
+drug enters the system. `generate_dosing_callback` builds that callback from a matrix
+with one row per dose, `[time amount]`:
+
+```{julia}
+function make_individual(g)
+    obs = g[.!ismissing.(g.DV), :]
+    dose = g.AMT[1] * g.WEIGHT[1]                      # mg
+    callback = generate_dosing_callback([0.0 dose])    # a bolus at t = 0
+    return Individual(g.ID[1], [g.WEIGHT[1]], obs.TIME, obs.DV, callback)
+end
+
+population = Population([make_individual(g) for g in groupby(df, :ID)])
+length(population), population[1]
+```
+
+Everything is stored as `Float32` by default. A `Population` behaves like a vector of
+individuals, so it can be indexed and sliced; `get_t`, `get_y` and `get_x` pull out the
+times, observations and covariates.
+
+```{julia}
+fig = Figure(size = (700, 350))
+ax = Axis(fig[1, 1]; xlabel = "Time (h)", ylabel = "Concentration (mg/L)")
+for indv in population
+    scatterlines!(ax, get_t(indv), get_y(indv); color = (:steelblue, 0.6), markersize = 7)
+end
+fig
+```
+
+## The model
+
+Theophylline is absorbed from the gut and eliminated from the central compartment, so
+we use `one_comp_abs!`, a built-in ODE with a depot and a central compartment. Its
+parameters are `[kₐ, CL, V]`: the absorption rate, the clearance and the volume of
+distribution. The package ships `one_comp!`, `one_comp_abs!`, `two_comp!` and
+`two_comp_abs!`; the [custom ODE tutorial](06-custom-ode.md) shows how to write your own.
+
+The network maps the (normalised) weight to those three positive parameters:
+
+```{julia}
+ann = Lux.Chain(
+    Normalize([100f0]),                  # min-max scale weight with an upper bound of 100 kg
+    Lux.Dense(1, 8, tanh),
+    Lux.Dense(8, 3, Lux.softplus),       # kₐ, CL and V must be positive
+    Lux.WrappedFunction(x -> x .* Float32[1, 3, 30]),  # start near plausible magnitudes
+)
+```
+
+The last layer rescales the outputs so that training starts at physiologically
+plausible values (a volume of about 30 L rather than 1 L). This is a modelling choice,
+not a requirement.
+
+```{julia}
+problem = ODEProblem(one_comp_abs!, zeros(Float32, 2), (-0.1f0, 1f0); dt = 0.01f0)
+model = DCM(problem, ann; target = 2)
+```
+
+The time span of the problem is a placeholder: it is replaced by the span of each
+individual when solving. Its *start* matters, though. It has to lie before the first
+dose, because the dosing callback only fires at times the solver steps to after
+starting. Hence `-0.1`, which is also what `DCM(ode_fn, ...)` uses.
+
+`target = 2` selects which ODE state is compared to the observations. In
+`one_comp_abs!` state 1 is the *amount* in the depot and state 2 the *concentration*
+in the central compartment, which is what was measured. (The default is `target = 1`.)
+
+::: {.callout-tip}
+`DCM(one_comp_abs!, ann)` builds the `ODEProblem` for you. Creating it explicitly, as
+here, lets you pass solver defaults along: the `dt = 0.01f0` is the solver's *initial*
+step size. Every individual starts with an empty body, and the solver's automatic
+choice of a first step then logs a "dt_epsilon" warning on each of the thousands of
+solves in a fit. The initial `dt` is only a starting point, the step size is still
+adaptive. The same keyword (and `reltol`, `abstol`, `solver`, ...) can also be passed to
+`predict`.
+:::
+
+## Fitting
+
+`setup` initialises the parameters `ps` (what is learned) and the state `st`
+(constants of the model) for a given objective. `SSE()` is the sum of squared errors:
+
+```{julia}
+rng = Random.Xoshiro(1)
+objective = SSE()
+ps, st = setup(objective, rng, model)
+objective(model, population, ps, st)
+```
+
+Objectives are plain callables, `objective(model, data, ps, st)`. `gradient`
+returns the gradient of the objective with respect to `ps`, with the same structure as
+`ps`, so it plugs straight into [Optimisers.jl](https://github.com/FluxML/Optimisers.jl):
+
+```{julia}
+function train(objective, model, population, ps, st; epochs, lr)
+    opt_state = Optimisers.setup(Optimisers.Adam(lr), ps)
+    losses = Float32[]
+    for _ in 1:epochs
+        ∇ = gradient(objective, model, population, ps, st)
+        opt_state, ps = Optimisers.update(opt_state, ps, ∇)
+        push!(losses, objective(model, population, ps, st))
+    end
+    return ps, losses
+end
+
+ps, losses = train(objective, model, population, ps, st; epochs = 150, lr = 0.02f0)
+losses[[1, 50, 100, 150]]
+```
+
+```{julia}
+fig = Figure(size = (500, 300))
+ax = Axis(fig[1, 1]; xlabel = "Epoch", ylabel = "Sum of squared errors", yscale = log10)
+lines!(ax, losses)
+fig
+```
+
+## Predictions
+
+`predict(model, data, ps, st)` solves the ODE for every individual and returns the
+predicted observations at the observed times. Pass `saveat` for a dense grid:
+
+```{julia}
+ŷ = predict(model, population, ps, st)
+ŷ[1]
+```
+
+```{julia}
+grid = 0:0.25:24
+fig = Figure(size = (900, 600))
+for (i, indv) in enumerate(population)
+    local ax = Axis(fig[fld(i - 1, 4) + 1, mod1(i, 4)]; title = "ID $(indv.id)",
+              xlabel = i > 8 ? "Time (h)" : "", ylabel = mod1(i, 4) == 1 ? "mg/L" : "")
+    lines!(ax, grid, predict(model, indv, ps, st; saveat = grid); color = :firebrick)
+    scatter!(ax, get_t(indv), get_y(indv); color = :black, markersize = 6)
+end
+fig
+```
+
+The network has learned a weight-dependent set of parameters. `predict_typ_parameters`
+returns them for any set of individuals, one column per individual:
+
+```{julia}
+ζ, _ = predict_typ_parameters(model, population, ps, st)
+DataFrame(permutedims(ζ), ["ka (1/h)", "CL (L/h)", "V (L)"])
+```
+
+::: {.callout-note}
+With only 12 subjects and one covariate this is a demonstration of the mechanics, not
+a serious model: there is no way to tell here whether the weight effect is real. The
+next tutorials add inter-individual variability and a likelihood.
+:::
+
+## Next
+
+- [Loading data](05-loading-data.md): getting your own data into `Individual`s, with
+  multiple doses, infusions and units.
+- [Mixed effects](02-mixed-effects.md): random effects and the variational ELBO.

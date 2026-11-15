@@ -1,0 +1,367 @@
+---
+title: "Tutorial 8: End-to-End Workflow"
+subtitle: "From raw data to a validated mixed-effects DCM on tobramycin"
+author: "DeepCompartmentModels.jl"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: false
+    self-contained: true
+jupyter: julia-1.10
+---
+
+## Introduction
+
+This tutorial follows a complete pharmacometric modelling workflow:
+
+1. **Exploratory data analysis** — understand the dataset before modelling
+2. **Model specification** — choose ODE structure, neural network, and error model
+3. **Parameter initialisation and fitting**
+4. **Goodness-of-fit diagnostics** — the plots every pharmacometrician needs before trusting a model
+5. **Model interrogation** — what did the network learn?
+
+**Dataset:** Tobramycin, an aminoglycoside antibiotic given by IV infusion.
+Patients receive multiple doses over several days. The dataset contains four
+covariates: body weight (`WT`), age (`AGE`), sex (`SEX`), and creatinine
+clearance (`CLCR`), which is the primary driver of aminoglycoside elimination.
+
+## Setup
+
+```{julia}
+using DeepCompartmentModels
+using DataFrames, CSV
+using Random
+using Statistics: mean, std, quantile
+using CairoMakie
+```
+
+---
+
+## 1 — Exploratory data analysis
+
+```{julia}
+df = DataFrame(CSV.File(joinpath(@__DIR__, "../data/tobramycin.csv")))
+
+# Observations: EVID = 0
+obs = filter(r -> r.EVID == 0, df)
+println("Subjects: $(length(unique(obs.ID)))")
+println("Observations: $(nrow(obs))")
+println("Obs per subject: min=$(minimum(combine(groupby(obs, :ID), nrow).nrow1)), "
+        * "max=$(maximum(combine(groupby(obs, :ID), nrow).nrow1))")
+println("\nCovariates:")
+for col in [:WT, :AGE, :CLCR]
+    vals = combine(groupby(df, :ID), col => first => col)[!, col]
+    println("  $col: $(round(minimum(vals), digits=1)) – $(round(maximum(vals), digits=1))")
+end
+```
+
+### Spaghetti plot — raw concentration–time data
+
+```{julia}
+fig = Figure(size=(700, 400))
+ax  = Axis(fig[1,1], xlabel="Time (h)", ylabel="Concentration (mg/L)",
+           title="Tobramycin: observed concentration–time profiles")
+
+for group in groupby(obs, :ID)
+    t = group.TIME
+    y = group.CP
+    lines!(ax,  t, y; color=(:steelblue, 0.3))
+    scatter!(ax, t, y; color=(:steelblue, 0.5), markersize=4)
+end
+fig
+```
+
+### Covariate distributions
+
+```{julia}
+covs = combine(groupby(df, :ID), :WT => first => :WT, :AGE => first => :AGE,
+               :CLCR => first => :CLCR, :SEX => first => :SEX)
+
+fig = Figure(size=(800, 250))
+for (i, col) in enumerate([:WT, :AGE, :CLCR])
+    ax = Axis(fig[1, i], title=string(col), ylabel="Count")
+    hist!(ax, covs[!, col]; bins=8, color=:steelblue)
+end
+fig
+```
+
+---
+
+## 2 — Load data
+
+```{julia}
+function load_tobramycin(df, ::Type{T} = Float32) where T
+    duration = T(40/60)   # 40-minute infusions
+    df_group = groupby(df, :ID)
+    indvs = Vector{AbstractIndividual}(undef, length(df_group))
+    for (i, group) in enumerate(df_group)
+        x   = Vector{T}(group[1, [:WT, :AGE, :SEX, :CLCR]])
+        obs = group[iszero.(group.EVID), [:TIME, :CP]]
+        d   = Matrix{T}(group[group.EVID .== 1, [:TIME, :DOSE]])
+        I   = hcat(d, d[:, 2] ./ duration, fill(duration, size(d, 1)))
+        cb  = generate_dosing_callback(I, T)
+        indvs[i] = Individual(group.ID[1], x, Vector{T}(obs.TIME),
+                              Vector{T}(obs.CP), cb, T)
+    end
+    Population(indvs)
+end
+
+population = load_tobramycin(df)
+println("Population: $(length(population)) subjects")
+```
+
+---
+
+## 3 — Model specification
+
+Tobramycin follows two-compartment kinetics. Creatinine clearance (`CLCR`) is
+a well-established predictor of CL; weight (`WT`) drives volumes. We let the
+neural network discover these relationships from data.
+
+```{julia}
+rng = Random.default_rng()
+
+ann = Lux.Chain(
+    Normalize([100f0, 90f0, 1f0, 150f0]),   # WT, AGE, SEX, CLCR
+    Lux.Dense(4, 32, tanh),
+    Lux.Dense(32, 16, tanh),
+    Lux.Dense(16, 4, softplus),              # CL, V₁, Q, V₂
+)
+
+model = DCM(two_comp!, ann, AdditiveError())
+
+obj = VariationalELBO([1, 2]; path_deriv=true)   # random effects on CL and V₁
+ps, st = setup(obj, rng, model, population;
+    init_omega  = 0.1f0,
+    init_sigma  = [0.5f0],
+)
+
+println("ps keys: $(keys(ps))")
+println("phi keys: $(keys(ps.phi))")
+```
+
+---
+
+## 4 — Fitting
+
+```{julia}
+opt = Adam(1f-3)
+losses = Float32[]
+
+opt_state, ps, st = fit(obj, model, population, opt, ps, st;
+    epochs = 1000,
+    callback = (epoch, loss) -> begin
+        push!(losses, loss)
+        epoch % 250 == 0 && println("Epoch $epoch  -ELBO = $(round(loss, digits=2))")
+    end,
+)
+```
+
+```{julia}
+fig = Figure(size=(600, 280))
+ax  = Axis(fig[1,1], xlabel="Epoch", ylabel="-ELBO")
+lines!(ax, losses; color=:steelblue)
+fig
+```
+
+---
+
+## 5 — Goodness-of-fit diagnostics
+
+All standard GOF plots compare two types of prediction:
+
+- **PRED** — *population* prediction: `predict(model, indv, ps, st; individual=false)`
+- **IPRED** — *individual* prediction: `predict(model, indv, ps, st; individual=true)`
+
+Residuals are **conditional weighted residuals (CWRES)** — scaled by the
+predicted standard deviation from the error model:
+
+$$\text{CWRES}_{ij} = \frac{y_{ij} - \hat{y}_{ij}}{\sigma(\hat{y}_{ij})}$$
+
+```{julia}
+# Collect all observed and predicted values
+σ_error = softplus(only(ps.error.σ))   # learned additive σ
+
+DV, PRED, IPRED, TIME_all = Float32[], Float32[], Float32[], Float32[]
+CWRES_pop, CWRES_ind = Float32[], Float32[]
+
+for indv in population
+    y     = get_y(indv)
+    t_obs = get_t(indv)
+    pred  = predict(model, indv, ps, st; individual=false)
+    ipred = predict(model, indv, ps, st; individual=true)
+
+    append!(DV,       y)
+    append!(PRED,     pred)
+    append!(IPRED,    ipred)
+    append!(TIME_all, t_obs)
+    append!(CWRES_pop, (y .- pred)  ./ σ_error)
+    append!(CWRES_ind, (y .- ipred) ./ σ_error)
+end
+```
+
+### DV vs PRED and DV vs IPRED
+
+The identity line is the target. Systematic curvature or fan-shaped scatter
+indicates model misspecification or heteroscedastic error.
+
+```{julia}
+lims = extrema([DV; PRED; IPRED]) .+ (-0.5f0, 0.5f0)
+
+fig = Figure(size=(800, 380))
+ax1 = Axis(fig[1,1], xlabel="PRED (mg/L)", ylabel="DV (mg/L)",
+           title="DV vs PRED (population)")
+ax2 = Axis(fig[1,2], xlabel="IPRED (mg/L)", ylabel="DV (mg/L)",
+           title="DV vs IPRED (individual)")
+
+for (ax, pred_vals) in [(ax1, PRED), (ax2, IPRED)]
+    scatter!(ax, pred_vals, DV; color=(:steelblue, 0.5), markersize=5)
+    lines!(ax, collect(lims), collect(lims); color=:black, linestyle=:dash)
+    xlims!(ax, lims); ylims!(ax, lims)
+end
+fig
+```
+
+### CWRES vs TIME and CWRES vs IPRED
+
+Residuals should be symmetrically scattered around zero with no trends.
+A trend over time suggests a systematic time-dependent bias; a trend over IPRED
+suggests the error model is misspecified (e.g. additive when proportional is needed).
+
+```{julia}
+fig = Figure(size=(800, 380))
+ax1 = Axis(fig[1,1], xlabel="Time (h)",       ylabel="CWRES", title="CWRES vs TIME")
+ax2 = Axis(fig[1,2], xlabel="IPRED (mg/L)",   ylabel="CWRES", title="CWRES vs IPRED")
+
+for (ax, xvals) in [(ax1, TIME_all), (ax2, IPRED)]
+    scatter!(ax, xvals, CWRES_ind; color=(:steelblue, 0.5), markersize=5)
+    hlines!(ax, [0f0, -2f0, 2f0];
+            color=[:black, :red, :red],
+            linestyle=[:solid, :dash, :dash])
+end
+fig
+```
+
+```{julia}
+# Summary statistics for residuals
+println("CWRES (individual) summary:")
+println("  Mean: $(round(mean(CWRES_ind), digits=3))")
+println("  SD:   $(round(std(CWRES_ind),  digits=3))  (target ≈ 1)")
+println("  % within ±2: $(round(100 * mean(abs.(CWRES_ind) .< 2), digits=1))%  (target ≈ 95%)")
+```
+
+### Q–Q plot
+
+Tests whether residuals are normally distributed. Points should follow the
+diagonal. Heavy tails suggest the Gaussian error assumption is violated.
+
+```{julia}
+n   = length(CWRES_ind)
+q_theoretical = quantile.(Normal(), (1:n) ./ (n + 1))
+q_observed    = sort(CWRES_ind)
+
+fig = Figure(size=(420, 400))
+ax  = Axis(fig[1,1], xlabel="Theoretical quantiles", ylabel="Sample quantiles",
+           title="Normal Q–Q plot of CWRES")
+scatter!(ax, q_theoretical, q_observed; color=:steelblue, markersize=5)
+lines!(ax, [-3f0, 3f0], [-3f0, 3f0]; color=:black, linestyle=:dash)
+fig
+```
+
+### Individual concentration–time fits
+
+The ultimate check: do predictions track the observations subject-by-subject?
+
+```{julia}
+t_dense = Float32.(0:0.5:200)
+fig     = Figure(size=(1000, 700))
+ids     = [indv.id for indv in population[1:9]]
+
+for (i, indv) in enumerate(population[1:9])
+    row, col = divrem(i - 1, 3)
+    ax = Axis(fig[row+1, col+1],
+              title="ID=$(indv.id)  WT=$(round(get_x(indv)[1], digits=0))  CLCR=$(round(get_x(indv)[4], digits=0))",
+              xlabel="Time (h)", ylabel="Conc (mg/L)")
+
+    pred_pop  = predict(model, indv, ps, st; individual=false, saveat=t_dense)
+    pred_indv = predict(model, indv, ps, st; individual=true,  saveat=t_dense)
+
+    lines!(ax, t_dense, pred_pop;  color=:gray70,    linestyle=:dash, label="PRED")
+    lines!(ax, t_dense, pred_indv; color=:steelblue, linewidth=2,     label="IPRED")
+    scatter!(ax, get_t(indv), get_y(indv); color=:black, markersize=6)
+
+    i == 1 && axislegend(ax; position=:rt)
+end
+fig
+```
+
+---
+
+## 6 — Model interrogation
+
+### What did the network learn about covariates?
+
+We can examine how predicted CL varies with CLCR by sweeping one covariate
+while holding others at their population median.
+
+```{julia}
+# Population medians
+med = round.(median(get_x(population), dims=2)[:], digits=1)
+println("Medians — WT=$(med[1]), AGE=$(med[2]), SEX=$(med[3]), CLCR=$(med[4])")
+
+# Sweep CLCR from 20 to 150 mL/min, hold others at median
+clcr_range = Float32.(20:5:150)
+x_sweep    = hcat([Float32[med[1], med[2], med[3], c] for c in clcr_range]...)
+
+ζ_sweep, _ = ann(x_sweep, ps.theta, st.theta)   # (4 × n_CLCR)
+
+fig = Figure(size=(700, 320))
+for (i, label) in enumerate(["CL", "V₁", "Q", "V₂"])
+    ax = Axis(fig[1, i], xlabel="CLCR (mL/min)", ylabel=label,
+              title="$label vs CLCR")
+    lines!(ax, clcr_range, ζ_sweep[i, :]; color=:steelblue, linewidth=2)
+end
+fig
+```
+
+### Learned residual error
+
+```{julia}
+println("Learned σ (additive): $(round(softplus(only(ps.error.σ)), digits=4)) mg/L")
+println("Omega (random effects prior variance):")
+println(round.(ps.omega, digits=4))
+```
+
+### Shrinkage
+
+High shrinkage means individual data were insufficient to pull ηᵢ away from
+the prior mean. It is a useful diagnostic for identifying data-sparse subjects.
+
+```{julia}
+η = hcat(ps.phi.μ...)   # 2 × n_subjects
+
+fig = Figure(size=(700, 320))
+for (i, label) in enumerate(["ηCL", "ηV₁"])
+    ax = Axis(fig[1, i], xlabel="Subject index", ylabel=label,
+              title="Individual random effects")
+    barplot!(ax, 1:length(population), η[i, :]; color=:steelblue)
+    hlines!(ax, [0f0]; color=:black, linestyle=:dash)
+end
+fig
+```
+
+---
+
+## Summary
+
+A complete validation workflow in DeepCompartmentModels.jl requires:
+
+| Plot | What to look for |
+|---|---|
+| DV vs PRED | Points on the identity line; no systematic bias |
+| DV vs IPRED | Tighter scatter than vs PRED; similar pattern |
+| CWRES vs TIME | No trend; ~95% within ±2 |
+| CWRES vs IPRED | Homoscedastic scatter around zero |
+| Q–Q plot | Points follow the diagonal; no heavy tails |
+| Individual fits | Predictions track observations for each subject |

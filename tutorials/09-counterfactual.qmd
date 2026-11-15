@@ -1,0 +1,380 @@
+---
+title: "Tutorial 9: Counterfactual Analysis and Bayesian Forecasting"
+subtitle: "Continuous predictions, new dosing schedules, and individualising treatment"
+author: "DeepCompartmentModels.jl"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: false
+    self-contained: true
+jupyter: julia-1.10
+---
+
+## Introduction
+
+A fitted DCM is not just a description of the training data — it is a
+generative model that can answer clinical "what-if" questions:
+
+- *What concentration–time profile would this patient have on 200 mg instead of 100 mg?*
+- *Is once-daily or twice-daily dosing better for achieving the target exposure?*
+- *Given two early measurements, what dose should I give next?*
+
+This tutorial covers three closely related workflows:
+
+1. **Continuous predictions** — generating smooth concentration–time curves at
+   any time grid, including between and after observed time points.
+2. **Counterfactual dosing** — changing the dosing callback to evaluate
+   alternative treatment schedules.
+3. **Bayesian forecasting** — using a population-fitted model as a prior to
+   individualise predictions when only a few observations are available
+   (therapeutic drug monitoring, TDM).
+
+## Setup
+
+```{julia}
+using DeepCompartmentModels
+using DataFrames, CSV
+using Random
+using Statistics: mean
+using Accessors
+using CairoMakie
+```
+
+We reuse the tobramycin model from Tutorial 8. For brevity, the loading and
+fitting steps are condensed here.
+
+```{julia}
+function load_tobramycin(df, ::Type{T} = Float32) where T
+    duration = T(40/60)
+    df_group = groupby(df, :ID)
+    indvs = Vector{AbstractIndividual}(undef, length(df_group))
+    for (i, group) in enumerate(df_group)
+        x   = Vector{T}(group[1, [:WT, :AGE, :SEX, :CLCR]])
+        obs = group[iszero.(group.EVID), [:TIME, :CP]]
+        d   = Matrix{T}(group[group.EVID .== 1, [:TIME, :DOSE]])
+        I   = hcat(d, d[:, 2] ./ duration, fill(duration, size(d, 1)))
+        cb  = generate_dosing_callback(I, T)
+        indvs[i] = Individual(group.ID[1], x, Vector{T}(obs.TIME),
+                              Vector{T}(obs.CP), cb, T)
+    end
+    Population(indvs)
+end
+
+df   = DataFrame(CSV.File(joinpath(@__DIR__, "../data/tobramycin.csv")))
+population = load_tobramycin(df)
+rng  = Random.default_rng()
+
+ann = Lux.Chain(
+    Normalize([100f0, 90f0, 1f0, 150f0]),
+    Lux.Dense(4, 32, tanh),
+    Lux.Dense(32, 16, tanh),
+    Lux.Dense(16, 4, softplus),
+)
+model = DCM(two_comp!, ann, AdditiveError())
+obj   = VariationalELBO([1, 2]; path_deriv=true)
+
+ps, st = setup(obj, rng, model, population; init_omega=0.1f0, init_sigma=[0.5f0])
+_, ps, st = fit(obj, model, population, Adam(1f-3), ps, st; epochs=1000,
+    callback = (e, l) -> e % 500 == 0 && println("Epoch $e  -ELBO=$(round(l,digits=2))"))
+```
+
+---
+
+## Part 1 — Continuous predictions
+
+By default, `predict` returns concentrations only at the individual's
+observation time points (`get_t(indv)`). Pass a dense `saveat` grid to get a
+smooth curve at any desired resolution.
+
+```{julia}
+indv = population[1]
+
+# Sparse: only at observed time points
+ŷ_sparse = predict(model, indv, ps, st; saveat=get_t(indv))
+
+# Dense: every 30 minutes
+t_dense = Float32.(0:0.5:maximum(get_t(indv)) + 24)
+ŷ_dense = predict(model, indv, ps, st; saveat=t_dense)
+
+fig = Figure(size=(650, 350))
+ax  = Axis(fig[1,1], xlabel="Time (h)", ylabel="Concentration (mg/L)",
+           title="Sparse vs dense predictions — subject $(indv.id)")
+
+scatter!(ax, get_t(indv), get_y(indv); color=:black, markersize=7, label="Observed")
+scatter!(ax, get_t(indv), ŷ_sparse;   color=:tomato, markersize=6,  label="Predicted (sparse)")
+lines!(ax,   t_dense,     ŷ_dense;    color=:steelblue, linewidth=2, label="Predicted (dense)")
+
+axislegend(ax; position=:rt)
+fig
+```
+
+::: {.callout-tip}
+`saveat` can be any `AbstractVector{Float32}` — including grids that extend
+beyond the last observation. This is essential for predicting accumulation
+over a multi-day dosing course.
+:::
+
+---
+
+## Part 2 — Counterfactual dosing
+
+To evaluate a different dosing regimen, create a new `DiscreteCallback` with
+`generate_dosing_callback` and swap it into a copy of the existing individual
+using `copy(indv, new_callback)`. The individual's covariates and random effects
+stay the same — only the dosing changes.
+
+### Building a new dosing schedule
+
+```{julia}
+# Helper: build a dosing matrix for repeated IV infusions
+# doses: [time, amount] pairs; duration in hours
+function iv_regimen(times, amounts, duration::T) where T
+    rates = amounts ./ duration
+    durs  = fill(T(duration), length(times))
+    return hcat(T.(times), T.(amounts), T.(rates), T.(durs))
+end
+```
+
+### Example: comparing three dosing strategies at 120 h (5 days)
+
+Tobramycin is dosed once or twice daily depending on renal function and
+clinical context. We compare:
+1. Standard: patient's actual regimen from the dataset
+2. Once-daily (QD): same total weekly dose, given once every 24 h
+3. Twice-daily (BID): same total weekly dose split across every 12 h
+
+```{julia}
+# Pick a representative subject
+subj = population[3]
+x_subj = get_x(subj)   # [WT, AGE, SEX, CLCR]
+t_plot  = Float32.(0:0.5:168)   # 7 days
+
+# Original regimen from dataset
+pred_orig = predict(model, subj, ps, st; saveat=t_plot)
+
+# Once-daily 80 mg over 40 min (every 24 h)
+A_qd  = iv_regimen(0:24:168, fill(80, 8), 40/60)
+cb_qd = generate_dosing_callback(A_qd, Float32)
+
+# Twice-daily 40 mg over 40 min (every 12 h)
+A_bid  = iv_regimen(0:12:168, fill(40, 15), 40/60)
+cb_bid = generate_dosing_callback(A_bid, Float32)
+
+# Swap the callback — all other fields (covariates, random effects) unchanged
+subj_qd  = copy(subj, cb_qd)
+subj_bid = copy(subj, cb_bid)
+
+pred_qd  = predict(model, subj_qd,  ps, st; saveat=t_plot)
+pred_bid = predict(model, subj_bid, ps, st; saveat=t_plot)
+
+fig = Figure(size=(750, 380))
+ax  = Axis(fig[1,1],
+    xlabel="Time (h)", ylabel="Concentration (mg/L)",
+    title="Counterfactual dosing — WT=$(round(x_subj[1],digits=0)) kg  CLCR=$(round(x_subj[4],digits=0)) mL/min")
+
+lines!(ax, t_plot, pred_orig; color=:gray50,    linestyle=:dash, label="Original")
+lines!(ax, t_plot, pred_qd;   color=:steelblue, linewidth=2,     label="QD 80 mg")
+lines!(ax, t_plot, pred_bid;  color=:tomato,    linewidth=2,     label="BID 40 mg")
+
+# Therapeutic target band (example: 0–2 mg/L trough, >8 mg/L peak)
+hlines!(ax, [8f0]; color=:green, linestyle=:dot, label="Target Cmax ≥ 8")
+hlines!(ax, [2f0]; color=:red,   linestyle=:dot, label="Target Ctrough ≤ 2")
+
+axislegend(ax; position=:rt)
+fig
+```
+
+### Population counterfactual: exposure distribution across regimens
+
+Comparing AUC and Cmax distributions across the whole population shows which
+regimen achieves the best target attainment.
+
+```{julia}
+function auc_and_cmax(pred_vals, t_grid)
+    # Trapezoidal AUC over the last 24 h
+    last_24 = t_grid .>= (maximum(t_grid) - 24)
+    t24 = t_grid[last_24]
+    c24 = pred_vals[last_24]
+    auc  = sum((c24[1:end-1] .+ c24[2:end]) ./ 2 .* diff(t24))
+    cmax = maximum(pred_vals)
+    return auc, cmax
+end
+
+duration = 40f0/60f0
+t_eval   = Float32.(0:0.5:168)
+
+aucs_qd  = Float32[]
+aucs_bid = Float32[]
+cmaxs_qd  = Float32[]
+cmaxs_bid = Float32[]
+
+for subj in population
+    cb_q  = generate_dosing_callback(iv_regimen(0:24:168, fill(80, 8), duration), Float32)
+    cb_b  = generate_dosing_callback(iv_regimen(0:12:168, fill(40, 15), duration), Float32)
+    ŷ_q   = predict(model, copy(subj, cb_q), ps, st; saveat=t_eval)
+    ŷ_b   = predict(model, copy(subj, cb_b), ps, st; saveat=t_eval)
+    a_q, c_q = auc_and_cmax(ŷ_q, t_eval)
+    a_b, c_b = auc_and_cmax(ŷ_b, t_eval)
+    push!(aucs_qd,  a_q); push!(cmaxs_qd,  c_q)
+    push!(aucs_bid, a_b); push!(cmaxs_bid, c_b)
+end
+
+fig = Figure(size=(700, 330))
+ax1 = Axis(fig[1,1], xlabel="AUC₂₄ (mg·h/L)", ylabel="Count", title="AUC distribution")
+ax2 = Axis(fig[1,2], xlabel="Cmax (mg/L)",     ylabel="Count", title="Cmax distribution")
+
+hist!(ax1, aucs_qd;   bins=8, color=(:steelblue, 0.6), label="QD")
+hist!(ax1, aucs_bid;  bins=8, color=(:tomato,    0.6), label="BID")
+hist!(ax2, cmaxs_qd;  bins=8, color=(:steelblue, 0.6), label="QD")
+hist!(ax2, cmaxs_bid; bins=8, color=(:tomato,    0.6), label="BID")
+
+for ax in [ax1, ax2]; axislegend(ax; position=:rt); end
+fig
+```
+
+---
+
+## Part 3 — Bayesian forecasting (TDM)
+
+In therapeutic drug monitoring, a new patient arrives with known covariates and
+one or two measured concentrations. The goal is to update our prediction of
+their PK parameters and recommend an appropriate dose.
+
+With `VariationalELBO`, the fitted `ps.theta` (neural network) and `ps.omega`
+(prior on random effects) encode population knowledge. For a new patient, we
+only need to find their individual random effects φᵢ = (μᵢ, Lᵢ).
+
+### Step 1 — Create a new patient
+
+```{julia}
+# New patient: 68-year-old, 75 kg male, CLCR = 55 mL/min
+# Received 80 mg IV over 40 min, two early samples taken
+x_new  = Float32[75f0, 68f0, 1f0, 55f0]   # WT, AGE, SEX, CLCR
+t_tdm  = Float32[2.0, 6.0]                  # blood draw times (h)
+y_tdm  = Float32[5.8, 3.1]                  # measured concentrations (mg/L)
+
+A_new  = iv_regimen([0], [80], 40/60)
+cb_new = generate_dosing_callback(A_new, Float32)
+
+new_patient = Individual("TDM-001", x_new, t_tdm, y_tdm, cb_new, Float32)
+new_pop     = Population([new_patient])
+```
+
+### Step 2 — Initialise individual posterior from the population prior
+
+We add a fresh variational posterior for the new patient, initialised from the
+learned prior Ω.
+
+```{julia}
+# Fresh phi for the new patient (μ=0, Σ=Ω)
+ps_new_phi, st_new_phi = setup_phi(obj, rng, model, new_pop, ps.omega;
+    num_params=4)   # 4 = NN output size
+
+# Build full ps for the new patient: keep population theta/omega, fresh phi
+ps_tdm = (
+    theta = ps.theta,
+    error = ps.error,
+    omega = ps.omega,
+    phi   = ps_new_phi,
+)
+st_tdm = (
+    theta = st.theta,
+    phi   = st_new_phi,
+)
+```
+
+### Step 3 — Optimise only φᵢ, keeping θ and Ω fixed
+
+```{julia}
+function fit_individual_phi(obj, model, indv_pop, ps, st; epochs=400, lr=5f-3)
+    opt_phi = Optimisers.setup(Adam(lr), ps.phi)
+    for epoch in 1:epochs
+        # Update epsilon samples (reparameterisation noise)
+        st = update_state(st, obj, model, indv_pop, ps)
+
+        loss, grads = Zygote.withgradient(ps.phi) do φ
+            ps_local = @set ps.phi = φ
+            -elbo(model, indv_pop, ps_local, st)
+        end
+        _, new_phi = Optimisers.update(opt_phi, ps.phi, only(grads))
+        ps = @set ps.phi = new_phi
+    end
+    return ps, st
+end
+
+import Zygote
+ps_tdm, st_tdm = fit_individual_phi(obj, model, new_pop, ps_tdm, st_tdm)
+println("Posterior μ: $(round.(ps_tdm.phi.μ[1], digits=3))")
+```
+
+### Step 4 — Compare prior vs posterior prediction
+
+```{julia}
+t_forecast = Float32.(0:0.25:48)
+
+# Prior: μᵢ = 0 (population mean, no individual data)
+ps_prior = @set ps_tdm.phi.μ[1] = zeros(Float32, 2)
+ŷ_prior  = predict(model, new_patient, ps_prior, st_tdm; saveat=t_forecast)
+
+# Posterior: μᵢ updated from two TDM observations
+ŷ_post   = predict(model, new_patient, ps_tdm, st_tdm; saveat=t_forecast)
+
+fig = Figure(size=(650, 380))
+ax  = Axis(fig[1,1],
+    xlabel="Time after first dose (h)", ylabel="Concentration (mg/L)",
+    title="Bayesian forecasting — patient TDM-001\n(WT=75 kg, CLCR=55 mL/min)")
+
+lines!(ax, t_forecast, ŷ_prior; color=:gray60, linestyle=:dash, linewidth=2,
+       label="Prior (population)")
+lines!(ax, t_forecast, ŷ_post;  color=:steelblue, linewidth=2.5,
+       label="Posterior (after 2 samples)")
+scatter!(ax, t_tdm, y_tdm; color=:black, markersize=10, label="TDM samples")
+
+axislegend(ax; position=:rt)
+fig
+```
+
+### Step 5 — Dose recommendation
+
+Given the posterior prediction, we can find the dose that achieves a target AUC:
+
+```{julia}
+# Target AUC₀₋₂₄ = 80 mg·h/L (a typical aminoglycoside PK/PD target)
+target_auc = 80f0
+t_24 = Float32.(0:0.5:24)
+
+function predicted_auc(dose, new_patient, ps, st, duration=40f0/60f0)
+    A_d  = iv_regimen([0], [dose], duration)
+    cb_d = generate_dosing_callback(A_d, Float32)
+    ŷ_d  = predict(model, copy(new_patient, cb_d), ps, st; saveat=t_24)
+    return sum((ŷ_d[1:end-1] .+ ŷ_d[2:end]) ./ 2 .* diff(t_24))
+end
+
+# Grid search over doses (in practice, a proper optimiser would be used)
+dose_range = Float32.(40:5:200)
+aucs_pred  = [predicted_auc(d, new_patient, ps_tdm, st_tdm) for d in dose_range]
+
+optimal_dose = dose_range[argmin(abs.(aucs_pred .- target_auc))]
+println("Recommended dose to achieve AUC = $target_auc mg·h/L: $(optimal_dose) mg")
+
+fig = Figure(size=(550, 330))
+ax  = Axis(fig[1,1], xlabel="Dose (mg)", ylabel="Predicted AUC₀₋₂₄ (mg·h/L)")
+lines!(ax, dose_range, aucs_pred; color=:steelblue, linewidth=2)
+hlines!(ax, [target_auc]; color=:red, linestyle=:dash, label="Target AUC")
+vlines!(ax, [optimal_dose]; color=:green, linestyle=:dash, label="Recommended dose")
+axislegend(ax; position=:lt)
+fig
+```
+
+---
+
+## Summary
+
+| Task | Key function / pattern |
+|---|---|
+| Smooth prediction curve | `predict(model, indv, ps, st; saveat=dense_grid)` |
+| New dosing regimen | `generate_dosing_callback(new_matrix, T)` |
+| Counterfactual individual | `copy(indv, new_callback)` |
+| Bayesian forecasting | `fit_individual_phi` — optimise `ps.phi` with frozen `ps.theta` |
+| Dose optimisation | Grid-search or optimiser over `predicted_auc(dose, ...)` |

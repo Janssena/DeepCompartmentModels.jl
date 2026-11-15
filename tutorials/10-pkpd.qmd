@@ -1,0 +1,316 @@
+---
+title: "Tutorial 10: PK/PD Modelling"
+subtitle: "Simultaneous fitting of pharmacokinetics and pharmacodynamics"
+author: "DeepCompartmentModels.jl"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: false
+    self-contained: true
+jupyter: julia-1.10
+---
+
+## Introduction
+
+Pharmacokinetic (PK) models describe how drug concentrations change over time.
+Pharmacodynamic (PD) models describe the relationship between concentration and
+effect. **Simultaneous PK/PD modelling** fits both systems together, allowing
+the neural network to predict individual parameters for both.
+
+This tutorial demonstrates a **PK/PD link model** using:
+
+- **PK:** two-compartment with IV infusion
+- **PD link:** effect-compartment with equilibration rate `ke0`
+- **PD effect:** Emax sigmoid model — `E = Emax * Ce^γ / (EC50^γ + Ce^γ)`
+
+Both PK concentrations and PD effects are observed simultaneously. The DCM
+predicts all PK and PD parameters from patient covariates.
+
+**Data:** Simulated to allow ground-truth validation. The true parameters vary
+realistically across subjects.
+
+## Setup
+
+```{julia}
+using DeepCompartmentModels
+using OrdinaryDiffEq
+using Random
+using Statistics: mean, std
+using CairoMakie
+
+rng = Random.default_rng()
+```
+
+---
+
+## 1 — Simulate a PK/PD population
+
+We simulate 30 subjects with two observed endpoints:
+- `y_pk`: plasma concentrations (compartment 1)
+- `y_pd`: pharmacodynamic effect (derived from effect-site concentration)
+
+```{julia}
+# True PK/PD ODE: two-compartment PK + effect compartment
+function pkpd_true!(dA, A, p, t)
+    CL, V₁, Q, V₂, ke0, I = p
+    k₁₀ = CL / V₁;  k₁₂ = Q / V₁;  k₂₁ = Q / V₂
+    dA[1] = (I / V₁) + A[2] * k₂₁ - A[1] * (k₁₀ + k₁₂)   # plasma
+    dA[2] = A[1] * k₁₂ - A[2] * k₂₁                         # peripheral
+    dA[3] = ke0 * (A[1]/V₁ - A[3])                          # effect site Ce
+end
+
+# True PD: sigmoid Emax (fixed across population for simplicity)
+Emax  = 100f0
+EC50  = 3f0
+gamma = 2f0
+emax_pd(Ce) = Emax * Ce^gamma / (EC50^gamma + Ce^gamma)
+
+function simulate_pkpd(id, weight, dose_mg, t_pk, t_pd, ::Type{T} = Float32) where T
+    # True parameters: allometric scaling from weight
+    CL   = T(2.5  * (weight/70)^0.75) * exp(T(0.3) * randn(rng, T))
+    V₁   = T(5.0  * (weight/70))      * exp(T(0.2) * randn(rng, T))
+    Q    = T(1.2)                      * exp(T(0.2) * randn(rng, T))
+    V₂   = T(8.0  * (weight/70))
+    ke0  = T(0.5)                      * exp(T(0.15) * randn(rng, T))
+
+    p_true = T[CL, V₁, Q, V₂, ke0, 0f0]
+
+    # 30-minute IV infusion: rate = dose/0.5h
+    dur = T(0.5)
+    A_dose = T[0f0  dose_mg  (dose_mg/dur)  dur]
+    cb = generate_dosing_callback(A_dose, T)
+
+    t_all = sort(unique(vcat(t_pk, t_pd)))
+    prob  = ODEProblem(pkpd_true!, zeros(T, 3), (T(-0.1), maximum(t_all) + T(1)), p_true)
+    sol   = solve(prob, Tsit5();
+        callback = cb, saveat = t_all, tstops = cb.condition.times)
+
+    # Extract PK (plasma = A[1]/V₁) and PD (Emax from Ce = A[3])
+    sol_arr = Array(sol)
+    t_idx_pk = indexin(t_pk, t_all)
+    t_idx_pd = indexin(t_pd, t_all)
+
+    y_pk = (sol_arr[1, t_idx_pk] ./ V₁) .+
+           T(0.2) .* (sol_arr[1, t_idx_pk] ./ V₁) .* randn(rng, T, length(t_pk))
+    y_pd = emax_pd.(sol_arr[3, t_idx_pd]) .+
+           T(3.0) .* randn(rng, T, length(t_pd))
+
+    y_pk = max.(y_pk, T(0))
+    y_pd = clamp.(y_pd, T(0), T(100))
+
+    return id, T[weight], t_pk, t_pd, y_pk, y_pd, cb, T
+end
+
+# PK samples: dense early, sparse late
+t_pk = Float32[0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0]
+# PD samples: at different time points than PK
+t_pd = Float32[0.5, 1.5, 3.0, 6.0, 10.0, 16.0]
+
+weights = Float32.(60:5:110)   # 11 weight values, 3 subjects each
+sim_data = [simulate_pkpd(i, weights[mod(i-1,11)+1], 200f0, t_pk, t_pd)
+            for i in 1:30]
+
+println("Simulated $(length(sim_data)) subjects")
+println("PK obs per subject: $(length(t_pk))")
+println("PD obs per subject: $(length(t_pd))")
+```
+
+---
+
+## 2 — Build an MOIndividual population
+
+`MOIndividual` handles multiple response variables per subject. It takes:
+- `ts`: a `Vector{Vector}` of observation times — one per response
+- `ys`: a `Vector{Vector}` of observations — one per response
+
+Internally it merges the time vectors into a single union grid and builds a
+`dvid` mask that records which time points belong to which response.
+
+```{julia}
+function make_mo_individual(id, x, t_pk, t_pd, y_pk, y_pd, cb, ::Type{T}) where T
+    MOIndividual(
+        id,
+        Vector{T}(x),
+        [Vector{T}(t_pk), Vector{T}(t_pd)],   # ts: [pk times, pd times]
+        [Vector{T}(y_pk), Vector{T}(y_pd)],   # ys: [pk obs,   pd obs  ]
+        cb,
+        T,
+    )
+end
+
+mo_pop = Population([make_mo_individual(d...) for d in sim_data])
+
+println("Population element type: $(nameof(eltype(mo_pop)))")
+println("Subject 1 unified time grid: $(length(mo_pop[1].t)) points")
+println("Subject 1 PK dvid (first 8): $(mo_pop[1].dvid[1][1:8])")
+println("Subject 1 PD dvid (first 8): $(mo_pop[1].dvid[2][1:8])")
+```
+
+---
+
+## 3 — PK/PD ODE and DCM specification
+
+```{julia}
+function pkpd_ode!(dA, A, p, t)
+    CL, V₁, Q, V₂, ke0, I = unpack(p, t)
+    k₁₀ = CL / V₁;  k₁₂ = Q / V₁;  k₂₁ = Q / V₂
+    dA[1] = (I / V₁) + A[2] * k₂₁ - A[1] * (k₁₀ + k₁₂)
+    dA[2] = A[1] * k₁₂ - A[2] * k₂₁
+    dA[3] = ke0 * (A[1]/V₁ - A[3])
+end
+
+# Neural network: weight → [CL, V₁, Q, V₂, ke0]
+ann_pkpd = Lux.Chain(
+    Normalize([120f0]),
+    Lux.Dense(1, 16, tanh),
+    Lux.Dense(16, 5, softplus),
+)
+
+# ErrorModelSet: separate error models for PK (proportional) and PD (additive)
+errors = ErrorModelSet(ProportionalError(0.2f0), AdditiveError(5f0))
+
+# target=[1,3]: observe plasma concentration (A[1]/V[1]) and effect site (A[3])
+# (DCM returns raw amounts; we handle the PD transformation below)
+model_pkpd = DCM(pkpd_ode!, 3, ann_pkpd, errors; target=[1, 3])
+
+println("Model: $(model_pkpd)")
+```
+
+::: {.callout-note}
+`target=[1,3]` tells the DCM to return compartments 1 and 3. For the PK
+response we want concentration `A[1]/V₁`, but `predict` returns raw amounts.
+The Emax PD transformation is applied post-prediction (see GOF section below).
+In a full implementation, consider using a `CustomError` that incorporates
+the nonlinear PD transformation inside the likelihood.
+:::
+
+---
+
+## 4 — Initialise and fit
+
+```{julia}
+obj_pkpd = VariationalELBO([1, 2]; path_deriv=true)   # RE on CL and V₁
+
+ps_pkpd, st_pkpd = setup(obj_pkpd, rng, model_pkpd, mo_pop;
+    init_omega  = 0.1f0,
+    init_sigma  = [[0.2f0], [5f0]],   # initial σ per response
+)
+
+println("ps keys: $(keys(ps_pkpd))")
+println("ps.error.σ: $(ps_pkpd.error.σ)")
+```
+
+```{julia}
+opt = Adam(1f-3)
+losses_pkpd = Float32[]
+
+_, ps_pkpd, st_pkpd = fit(obj_pkpd, model_pkpd, mo_pop, opt, ps_pkpd, st_pkpd;
+    epochs = 800,
+    callback = (epoch, loss) -> begin
+        push!(losses_pkpd, loss)
+        epoch % 200 == 0 && println("Epoch $epoch  -ELBO = $(round(loss, digits=2))")
+    end,
+)
+```
+
+---
+
+## 5 — Evaluation and GOF
+
+For `MOIndividual`, `predict` returns a `Vector{Vector}` — one concentration
+vector per response.
+
+```{julia}
+# ŷ is a 2-element vector: [PK concentrations, PD effect-site amounts]
+ŷ_demo = predict(model_pkpd, mo_pop[1], ps_pkpd, st_pkpd)
+println("predict returns $(length(ŷ_demo)) responses")
+println("  PK ($(length(ŷ_demo[1])) values): $(round.(ŷ_demo[1][1:4], digits=3))...")
+println("  PD ($(length(ŷ_demo[2])) values): $(round.(ŷ_demo[2][1:4], digits=3))...")
+```
+
+```{julia}
+# Collect GOF data across population
+DV_pk, PRED_pk, DV_pd, PRED_pd = Float32[], Float32[], Float32[], Float32[]
+
+for (i, indv) in enumerate(mo_pop)
+    ŷ = predict(model_pkpd, indv, ps_pkpd, st_pkpd)
+    # ŷ[1] = plasma amounts; concentration = amount / V₁
+    V₁_pred = predict_typ_parameters(model_pkpd, indv, ps_pkpd, st_pkpd)[1][2]  # index 2 = V₁
+    pk_conc  = ŷ[1] ./ V₁_pred
+    pd_pred  = emax_pd.(ŷ[2])   # apply Emax transformation to effect-site amounts
+
+    append!(DV_pk,   indv.ys[1])
+    append!(PRED_pk, pk_conc)
+    append!(DV_pd,   indv.ys[2])
+    append!(PRED_pd, pd_pred)
+end
+
+fig = Figure(size=(800, 380))
+ax1 = Axis(fig[1,1], xlabel="PRED conc (mg/L)", ylabel="DV conc (mg/L)", title="PK: DV vs PRED")
+ax2 = Axis(fig[1,2], xlabel="PRED effect (%)", ylabel="DV effect (%)",   title="PD: DV vs PRED")
+
+for (ax, pred, obs) in [(ax1, PRED_pk, DV_pk), (ax2, PRED_pd, DV_pd)]
+    lims = extrema([pred; obs]) .+ (-0.5f0, 0.5f0)
+    scatter!(ax, pred, obs; color=(:steelblue, 0.5), markersize=5)
+    lines!(ax, collect(lims), collect(lims); color=:black, linestyle=:dash)
+    xlims!(ax, lims); ylims!(ax, lims)
+end
+fig
+```
+
+### Individual PK/PD time courses
+
+```{julia}
+t_dense = Float32.(0:0.25:26)
+fig = Figure(size=(900, 600))
+
+for (i, indv) in enumerate(mo_pop[1:4])
+    # PK panel
+    ax_pk = Axis(fig[2i-1, 1], ylabel="Conc (mg/L)", title="Subject $(indv.id) — PK")
+    ax_pd = Axis(fig[2i-1, 2], ylabel="Effect (%)",  title="Subject $(indv.id) — PD")
+
+    ŷ = predict(model_pkpd, indv, ps_pkpd, st_pkpd; saveat=t_dense)
+    V₁_pred = predict_typ_parameters(model_pkpd, indv, ps_pkpd, st_pkpd)[1][2]
+
+    lines!(ax_pk, t_dense, ŷ[1] ./ V₁_pred; color=:steelblue, linewidth=2)
+    scatter!(ax_pk, indv.t[indv.dvid[1]], indv.ys[1]; color=:black, markersize=5)
+
+    lines!(ax_pd, t_dense, emax_pd.(ŷ[2]); color=:tomato, linewidth=2)
+    scatter!(ax_pd, indv.t[indv.dvid[2]], indv.ys[2]; color=:black, markersize=5)
+end
+fig
+```
+
+### Residuals
+
+```{julia}
+σ_pk = softplus(only(ps_pkpd.error.σ[1]))   # proportional σ
+σ_pd = softplus(only(ps_pkpd.error.σ[2]))   # additive σ
+
+cwres_pk = (DV_pk .- PRED_pk) ./ (PRED_pk .* σ_pk .+ 1f-6)
+cwres_pd = (DV_pd .- PRED_pd) ./ σ_pd
+
+fig = Figure(size=(800, 320))
+ax1 = Axis(fig[1,1], xlabel="PRED", ylabel="CWRES", title="PK residuals")
+ax2 = Axis(fig[1,2], xlabel="PRED", ylabel="CWRES", title="PD residuals")
+
+for (ax, pred, cwres) in [(ax1, PRED_pk, cwres_pk), (ax2, PRED_pd, cwres_pd)]
+    scatter!(ax, pred, cwres; color=(:steelblue, 0.5), markersize=5)
+    hlines!(ax, [0f0, -2f0, 2f0]; color=[:black, :red, :red],
+            linestyle=[:solid, :dash, :dash])
+end
+fig
+```
+
+---
+
+## Summary
+
+| Concept | Implementation |
+|---|---|
+| Multiple responses | `MOIndividual(id, x, [t_pk, t_pd], [y_pk, y_pd], cb)` |
+| Per-response error models | `ErrorModelSet(ProportionalError(), AdditiveError())` |
+| Observed compartments | `DCM(...; target=[1, 3])` |
+| Predictions per response | `predict(...)` returns `Vector{Vector}` |
+| Residual scaling | Use `softplus(ps.error.σ[j])` for response `j` |

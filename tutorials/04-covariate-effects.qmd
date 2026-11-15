@@ -1,0 +1,151 @@
+---
+title: "Interpretable covariate effects"
+subtitle: "Branch networks that keep each covariate's effect on a parameter readable"
+format:
+  html:
+    toc: true
+    code-fold: false
+jupyter: julia-1.10
+---
+
+A fully connected network can model arbitrary covariate interactions, but it is hard to
+say what it has learned. Pharmacometric practice prefers *covariate effects* one can plot:
+"clearance increases with weight and decreases with age". The branch layers of this package give
+the network that structure. Each covariate gets its own small network (a *branch*) that outputs a
+positive multiplier, and a `Combine` layer multiplies the branches that act on the same
+parameter. Afterwards, `interpret_branch` plots each effect.
+
+```{julia}
+using DeepCompartmentModels
+using DataFrames, CSV
+using CairoMakie
+using Random
+```
+
+## Data
+
+The warfarin data with weight, age and sex, as in the [mixed-effects tutorial](02-mixed-effects.md):
+
+```{julia}
+warfarin = DataFrame(CSV.File(joinpath(@__DIR__, "..", "data", "warfarin.csv")))
+warfarin = warfarin[warfarin.DVID .== 1, :]
+
+function make_individual(g)
+    covariates = Float32[g.WEIGHT[1], g.AGE[1], g.SEX[1]]
+    doses = Matrix{Float32}(g[g.MDV .== 1, [:TIME, :DOSE, :RATE, :DURATION]])
+    obs = g[g.MDV .== 0, :]
+    return Individual(g.ID[1], covariates, obs.TIME, obs.DV, generate_dosing_callback(doses))
+end
+
+population = Population([make_individual(g) for g in groupby(warfarin, :ID)])
+length(population)
+```
+
+## A branch network
+
+The parameters of `one_comp_abs!` are `[kₐ, CL, V]`. We let weight act on clearance and
+volume, and age and sex on clearance only; absorption gets no covariate and stays at a
+fixed typical value.
+
+```{julia}
+ann = Lux.Chain(
+    Normalize(Float32[100, 100, 1]),                      # scale the three covariates to [0, 1]
+    Lux.BranchLayer(                                      # one branch per covariate
+        MultiHeadedBranch(1, 6, 2; activation = Lux.swish),   # weight, one head each for CL and V
+        SingleHeadedBranch(2, 6; activation = Lux.swish),     # age
+        SingleHeadedBranch(3, 6; activation = Lux.swish),     # sex
+    ),
+    Combine(3, 1 => [2, 3], 2 => [2], 3 => [2]),          # 3 outputs; branch i acts on these outputs
+    Lux.WrappedFunction(x -> x .* Float32[1, 0.2, 10]),   # typical values: kₐ, CL, V
+)
+```
+
+- `SingleHeadedBranch(i, n)` is a one-hidden-layer network on covariate `i` with `n`
+  neurons and a softplus output, so it returns a positive multiplier. Keeping a branch to one
+  or two covariates is what makes it readable.
+- `MultiHeadedBranch(i, n, heads)` shares the hidden layer but has an independent output
+  head per target. A branch must produce one row for every output it feeds, so weight, which
+  acts on both `CL` and `V`, needs two heads. Age and sex act on one output each.
+- `Combine(out_dim, branch => [outputs]...)` routes branches to outputs. Branches that point at the same
+  output are multiplied. An output with no branch is `1`, so `kₐ` is just the typical
+  value from the last layer.
+- Branch layers read the covariates of a *matrix* (one column per individual), so use them
+  with populations.
+
+```{julia}
+problem = ODEProblem(one_comp_abs!, zeros(Float32, 2), (-0.1f0, 1f0); dt = 0.01f0)
+model = DCM(problem, ann; target = 2)
+ps, st = setup(SSE(), Random.Xoshiro(1), model)
+SSE()(model, population, ps, st)
+```
+
+## Fitting
+
+```{julia}
+function train(objective, model, population, ps, st; epochs, lr)
+    opt_state = Optimisers.setup(Optimisers.Adam(lr), ps)
+    losses = Float32[]
+    for _ in 1:epochs
+        ∇ = gradient(objective, model, population, ps, st)
+        opt_state, ps = Optimisers.update(opt_state, ps, ∇)
+        push!(losses, objective(model, population, ps, st))
+    end
+    return ps, losses
+end
+
+ps, losses = train(SSE(), model, population, ps, st; epochs = 300, lr = 0.01f0)
+losses[[1, 100, 200, 300]]
+```
+
+## Reading the covariate effects
+
+Each branch is an ordinary Lux layer inside the chain, so its effect can be evaluated on a grid of
+covariate values. The helper below runs one branch over the whole range of its covariate and divides by
+the output at a reference value (the `anchor`), so that the effect is `1` at the anchor and `1.3` where
+the branch output is 30 % higher. The package also exports `interpret_branch` for this purpose, but it
+does not work with current Lux versions (see [Status and limitations](../limitations.md)).
+
+```{julia}
+function covariate_effect(ann, ps_theta, st_theta, idx, anchor; upper)
+    branch = ann.layers.layer_2.layers[idx]            # the branch layer of covariate `idx`
+    ps_b, st_b = ps_theta.layer_2[idx], st_theta.layer_2[idx]
+    # a branch reads row `idx` of a (covariates × samples) matrix
+    run(v) = first(branch(vcat(zeros(Float32, idx - 1, length(v)), reshape(Float32.(v), 1, :),
+                               zeros(Float32, 3 - idx, length(v))), ps_b, st_b))
+    x = 0:0.01:1                                        # the normalised covariate
+    return x .* upper, run(x) ./ run([anchor / upper])
+end
+
+x_weight, effect_weight = covariate_effect(ann, ps.theta, st.theta, 1, 70f0; upper = 100f0)
+x_age, effect_age = covariate_effect(ann, ps.theta, st.theta, 2, 50f0; upper = 100f0)
+
+size(effect_weight), size(effect_age)
+```
+
+The weight branch has two heads, so `effect_weight` has a row for the effect on clearance and a row
+for the effect on volume.
+
+```{julia}
+fig = Figure(size = (800, 300))
+ax1 = Axis(fig[1, 1]; xlabel = "Weight (kg)", ylabel = "Relative effect")
+lines!(ax1, x_weight, effect_weight[1, :]; label = "CL")
+lines!(ax1, x_weight, effect_weight[2, :]; label = "V")
+axislegend(ax1; position = :lt)
+ax2 = Axis(fig[1, 2]; xlabel = "Age (years)", ylabel = "Relative effect on CL")
+lines!(ax2, x_age, vec(effect_age))
+fig
+```
+
+The curves cover 0 to the upper bound given to `Normalize`. Check the range of the data before reading the
+ends of a curve, since the network was only fitted where there are patients:
+
+```{julia}
+extrema(get_x(population)[1, :]), extrema(get_x(population)[2, :])
+```
+
+::: {.callout-note}
+Because each covariate has an independent branch, the model is *multiplicative* across
+covariates: the effect of age on clearance is the same at every weight. That is the price
+of interpretability. A fully connected network can capture interactions but cannot be
+summarised in one plot per covariate.
+:::

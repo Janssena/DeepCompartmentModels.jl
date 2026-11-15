@@ -1,0 +1,164 @@
+---
+title: "Writing your own ODE model"
+subtitle: "A transit-compartment absorption model beyond the built-in compartment models"
+format:
+  html:
+    toc: true
+    code-fold: false
+jupyter: julia-1.10
+---
+
+The built-in `one_comp!`, `one_comp_abs!`, `two_comp!` and `two_comp_abs!` cover the
+standard cases. Any other structure is just a Julia function. This tutorial writes a model with
+*transit-compartment absorption*, a common way to describe delayed absorption, fits it
+to the theophylline data, and compares it with the built-in `one_comp_abs!`.
+
+```{julia}
+using DeepCompartmentModels
+using DataFrames, CSV
+using CairoMakie
+using Random
+
+df = DataFrame(CSV.File(joinpath(@__DIR__, "..", "data", "theophylline.csv")))
+population = Population([begin
+    obs = g[.!ismissing.(g.DV), :]
+    cb = generate_dosing_callback([0.0 g.AMT[1] * g.WEIGHT[1]])
+    Individual(g.ID[1], [g.WEIGHT[1]], obs.TIME, obs.DV, cb)
+end for g in groupby(df, :ID)])
+length(population)
+```
+
+## The conventions
+
+An ODE function for a DCM is an ordinary in-place `OrdinaryDiffEq` function
+`f!(dA, A, p, t)` with three conventions:
+
+1. **`p` is the parameter vector the network predicts, followed by the infusion rate `I`.**
+   The dosing callback writes the current infusion rate into the *last* element of `p`. A
+   model with `n` network outputs therefore reads `n + 1` values.
+2. **Read `p` with `unpack(p, t)`.** For a plain vector this returns `p` unchanged. It also
+   makes the function work with time-varying parameters.
+3. **Drug enters through `I`.** Add `I` to the equation of the compartment where the dose
+   is given, normally the first. Whether a state is an amount or a concentration is up to you:
+   in `one_comp_abs!`, state 1 is an amount and state 2 a concentration (`/ V`), so `I`
+   must be an amount per hour in state 1.
+
+The built-in functions are written exactly like this, for example:
+
+```julia
+function one_comp_abs!(dA, A, p, t)
+    kₐ, CL, Vd, I = unpack(p, t)
+    k₁₀ = CL / Vd
+
+    dA[1] = I - kₐ * A[1]
+    dA[2] = (kₐ * A[1] / Vd) - A[2] * k₁₀
+end
+```
+
+## A transit-compartment model
+
+Instead of a single depot, the dose passes through a chain of transit compartments with the
+same rate constant `ktr` before it reaches the central compartment. One transit
+compartment gives:
+
+```{julia}
+function transit_abs!(dA, A, p, t)
+    ktr, CL, V, I = unpack(p, t)
+
+    dA[1] = I - ktr * A[1]               # depot
+    dA[2] = ktr * A[1] - ktr * A[2]      # transit compartment
+    dA[3] = ktr * A[2] / V - (CL / V) * A[3]   # central (concentration)
+end
+```
+
+Three states, so the problem needs `u0 = zeros(3)`, and the observations are state 3,
+so `target = 3`.
+
+```{julia}
+transit_problem = ODEProblem(transit_abs!, zeros(Float32, 3), (-0.1f0, 1f0); dt = 0.01f0)
+```
+
+::: {.callout-note}
+`DCM(transit_abs!, ann)` also works without an explicit problem. The number of states is then
+read off the function by looking for the highest index written with `dA[i] = ...`, which is
+convenient but a heuristic: if it guesses wrong, use `DCM(f!, n_states, ann)` or pass an
+`ODEProblem` as above.
+:::
+
+## Fitting both models
+
+The network predicts three positive parameters for both models, `ktr` or `kₐ`, `CL` and `V`:
+
+```{julia}
+make_ann() = Lux.Chain(
+    Normalize([100f0]),
+    Lux.Dense(1, 8, tanh),
+    Lux.Dense(8, 3, Lux.softplus),
+    Lux.WrappedFunction(x -> x .* Float32[1, 3, 30]),
+)
+
+builtin = DCM(ODEProblem(one_comp_abs!, zeros(Float32, 2), (-0.1f0, 1f0); dt = 0.01f0), make_ann(); target = 2)
+transit = DCM(transit_problem, make_ann(); target = 3)
+nothing # hide
+```
+
+```{julia}
+function train(objective, model, population, ps, st; epochs, lr)
+    opt_state = Optimisers.setup(Optimisers.Adam(lr), ps)
+    losses = Float32[]
+    for _ in 1:epochs
+        ∇ = gradient(objective, model, population, ps, st)
+        opt_state, ps = Optimisers.update(opt_state, ps, ∇)
+        push!(losses, objective(model, population, ps, st))
+    end
+    return ps, losses
+end
+
+fits = Dict()
+for (name, model) in ["one_comp_abs!" => builtin, "transit_abs!" => transit]
+    ps, st = setup(SSE(), Random.Xoshiro(1), model)
+    ps, losses = train(SSE(), model, population, ps, st; epochs = 200, lr = 0.02f0)
+    fits[name] = (; model, ps, st, losses)
+end
+DataFrame(model = collect(keys(fits)), SSE = [f.losses[end] for f in values(fits)])
+```
+
+Both fits use the same data, network and optimiser, so the difference in sum of squared
+errors reflects the structural model. Next the predicted curves for one subject:
+
+```{julia}
+grid = Float32.(0:0.1:24)
+indv = population[3]
+
+fig = Figure(size = (650, 350))
+ax = Axis(fig[1, 1]; xlabel = "Time (h)", ylabel = "Concentration (mg/L)")
+scatter!(ax, get_t(indv), get_y(indv); color = :black, label = "observed")
+for (name, color) in ["one_comp_abs!" => :steelblue, "transit_abs!" => :firebrick]
+    f = fits[name]
+    lines!(ax, grid, predict(f.model, indv, f.ps, f.st; saveat = grid); color, label = name)
+end
+axislegend(ax)
+fig
+```
+
+## Predicting other states
+
+`predict` returns the target state only. To get every state, for example to look at the
+amount in the transit compartment, pass `target = false`, which returns the ODE solution:
+
+```{julia}
+f = fits["transit_abs!"]
+sols = predict(f.model, indv, f.ps, f.st; target = false, saveat = grid)
+Array(sols)[1:3, [1, 20, 50, 100]]
+```
+
+Each column is a time point, each row a compartment (depot, transit, central).
+
+## Tips
+
+- Everything the network outputs must be positive if it is used as a rate or volume. A
+  `softplus` output layer is the simplest way to guarantee it.
+- Scale the outputs of the network to a plausible range, as in the last layer above. Starting at the right order
+  of magnitude matters more than the architecture.
+- Fitting observations of more than one state, such as drug and effect, is not working
+  in the current version, see [Status and limitations](../limitations.md).

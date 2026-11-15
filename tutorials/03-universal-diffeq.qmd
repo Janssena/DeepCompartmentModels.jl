@@ -1,0 +1,199 @@
+---
+title: "Universal Differential Equations"
+subtitle: "Discovering an unknown elimination process with a hybrid ODE + neural network"
+format:
+  html:
+    toc: true
+    code-fold: false
+jupyter: julia-1.10
+---
+
+In a standard deep compartment model the neural network predicts the *parameters* of
+an ODE. In a **universal differential equation** (UDE) the neural network is *part of
+the ODE*: it replaces a term of the right-hand side that is not known. For the models
+in this package that right-hand side is
+
+```
+dA/dt = [I, 0, ..., 0] + NN(A; θ)
+```
+
+where `I` is the infusion rate that the dosing callback sets for the individual, and
+the network learns the remaining dynamics from the data. This tutorial simulates a
+drug with saturable (Michaelis-Menten) elimination and learns the elimination curve
+from amount-time data.
+
+## Setup
+
+```{julia}
+using DeepCompartmentModels   # also re-exports Lux, Optimisers, OrdinaryDiffEq, ...
+using CairoMakie
+using Random
+```
+
+## Simulate data
+
+The true system is a single compartment, in amounts, with Michaelis-Menten elimination:
+`dA/dt = I - Vmax * A / (Km + A)`. Every subject gets a different dose, which makes
+the amounts cover a wide range. The dosing callback is the same object that is later
+used for fitting. Note that the solver has to stop at the callback times (`tstops`),
+otherwise the infusion is never switched off.
+
+```{julia}
+function true_ode!(dA, A, p, t)
+    Vmax, Km, I = p
+    dA[1] = I - Vmax * A[1] / (Km + A[1])
+end
+
+rng = Random.Xoshiro(1)
+t_obs = Float32[0.5, 1, 2, 4, 6, 8, 12, 16, 24]
+
+population = Population(map(1:12) do i
+    dose = Float32(50 + 25 * (i % 4))
+    callback = generate_dosing_callback(Float32[0 dose], Float32)
+
+    prob = ODEProblem(true_ode!, Float32[0], (-0.1f0, 24f0), Float32[8, 20, 0])
+    sol = solve(prob, Tsit5(); callback, saveat = t_obs, tstops = callback.condition.times)
+    y = max.(only.(sol.u) .+ 0.5f0 .* randn(rng, Float32, length(t_obs)), 0f0)
+
+    Individual(i, Float32[1], t_obs, y, callback, Float32)
+end)
+```
+
+## Define the UDE
+
+A `UniversalDiffEq` holds the structure of the ODE; the network goes in the
+`DeepCompartmentModel`. `UniversalDiffEq(1)` is a system with a single state. The
+network takes the state as its input and returns the rate of change that is not
+accounted for by the dose. Because that is the *elimination*, the network has to learn
+a negative number, so its last layer has no activation function.
+
+```{julia}
+ude = UniversalDiffEq(1)
+
+nn = Lux.Chain(
+    Lux.Dense(1, 16, tanh),
+    Lux.Dense(16, 16, tanh),
+    Lux.Dense(16, 1),
+)
+
+dcm = DeepCompartmentModel(ude, nn)
+```
+
+::: {.callout-note}
+The `sensealg` of the model decides how gradients are propagated through the ODE
+solver. For small networks (fewer than ~250 parameters) forward-mode sensitivities
+(`ForwardDiffSensitivity`) are fastest; for larger networks an adjoint method scales
+better. `DeepCompartmentModel` picks `GaussAdjoint(; autojacvec = ReverseDiffVJP(true))`
+for larger UDEs, and you can always pass your own with `sensealg = ...`. The compiled
+`ReverseDiffVJP(true)` is only valid when the right-hand side has no branches that
+depend on the values of the states or parameters.
+:::
+
+## Initialise and fit
+
+`setup` creates the parameters `ps` and the (Lux) state `st`. For a UDE the network
+weights live in `ps.theta`, together with the infusion rate `I`, which the dosing
+callback manages (it is never trained).
+
+```{julia}
+obj = SSE()
+ps, st = setup(obj, rng, dcm)
+keys(ps.theta)
+```
+
+`fit` minimises the objective with an Optimisers.jl rule. It returns the optimiser state, the
+trained parameters and the state, and calls `callback(epoch, loss)` every epoch.
+`parallel = :individual` solves the individuals on separate threads (start Julia with `-t auto`
+to benefit).
+
+```{julia}
+losses = Float32[]
+opt_state, ps, st = fit(obj, dcm, population, Optimisers.Adam(3f-3), ps, st;
+    epochs = 800,
+    parallel = :individual,
+    callback = (epoch, loss) -> push!(losses, loss),
+)
+
+println("SSE: ", round(first(losses), digits = 1), " -> ", round(last(losses), digits = 1))
+```
+
+`fit` is a thin wrapper, there is no hidden magic. The call above is equivalent to this loop,
+which you can use directly if you need more control (for example custom learning rate schedules,
+early stopping or extra logging):
+
+```{julia}
+#| eval: false
+opt_state = Optimisers.setup(Optimisers.Adam(3f-3), ps)
+
+for epoch in 1:800
+    ∇ = gradient(obj, dcm, population, ps, st; parallel = :individual)   # gradient of the objective w.r.t. ps
+    opt_state, ps = Optimisers.update(opt_state, ps, ∇)                  # one optimiser step
+end
+```
+
+```{julia}
+fig = Figure(size = (600, 300))
+ax = Axis(fig[1, 1]; xlabel = "Epoch", ylabel = "SSE", yscale = log10)
+lines!(ax, losses)
+fig
+```
+
+## Predictions
+
+`predict` solves the UDE for an individual (or a population) and returns the
+predicted observations. Pass `saveat` for a dense time grid.
+
+```{julia}
+t_grid = collect(0f0:0.25f0:24f0)
+
+fig = Figure(size = (800, 500))
+for (i, indv) in enumerate(population[1:4])
+    row, col = divrem(i - 1, 2)
+    ax = Axis(fig[row + 1, col + 1]; title = "Subject $(indv.id)", xlabel = "Time (h)", ylabel = "Amount")
+    scatter!(ax, get_t(indv), get_y(indv); color = :black)
+    lines!(ax, t_grid, predict(dcm, indv, ps, st; saveat = t_grid))
+end
+fig
+```
+
+## Inspect the learned elimination
+
+Since the network is the elimination term, we can evaluate it directly and compare it
+to the truth. `Lux.StatefulLuxLayer` binds the state of the network so that it can be
+called as a function of the input and the parameters.
+
+```{julia}
+nn_fit = Lux.StatefulLuxLayer{true}(nn, nothing, st.theta)
+
+amounts = collect(0f0:1f0:100f0)
+learned = -vec(nn_fit(reshape(amounts, 1, :), ps.theta))
+truth = @. 8f0 * amounts / (20f0 + amounts)
+
+fig = Figure(size = (500, 350))
+ax = Axis(fig[1, 1]; xlabel = "Amount A (mg)", ylabel = "Elimination rate (mg/h)")
+lines!(ax, amounts, learned; label = "Neural network")
+lines!(ax, amounts, truth; color = :black, linestyle = :dash, label = "True (Michaelis-Menten)")
+axislegend(ax; position = :rb)
+fig
+```
+
+After 800 epochs the network follows the saturating shape and is close to the truth at
+high amounts, but it is still off at low amounts (below ~30 mg), and the SSE is still
+well above the noise level of the simulation. Training for longer brings the curves closer
+together. Outside the range of amounts that occur in the data, for example close to
+zero, the network extrapolates and should not be trusted.
+
+::: {.callout-note}
+In this model the network is shared by everyone: there are no individual parameters or
+random effects inside the ODE. All subjects therefore have the same elimination curve,
+which is why the simulated subjects here differ only in their dose.
+:::
+
+## Summary
+
+- `UniversalDiffEq(n)` + a Lux network in `DeepCompartmentModel` gives a hybrid ODE in
+  which the network learns the dynamics that are not known.
+- `setup`, `fit`, `gradient`, `predict` and the objectives (`SSE`, `MSE`, `LogLikelihood`) work as for any
+  other model in the package; the weights live in `ps.theta`.
+- Use `type = TimeConcatUDE()` to give the network the time as an extra input, and
+  `inplace = true` for an in-place right-hand side.

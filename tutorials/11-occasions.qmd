@@ -1,0 +1,343 @@
+---
+title: "Tutorial 11: Inter-Occasion Variability and Occasions"
+subtitle: "Modelling repeated treatment periods and understanding the solve return structure"
+author: "DeepCompartmentModels.jl"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: false
+    self-contained: true
+jupyter: julia-1.10
+---
+
+## Introduction
+
+In many clinical studies, patients are observed over multiple **occasions** —
+separated periods of treatment and wash-out. Common examples:
+
+- **Crossover designs:** Period A (drug) → wash-out → Period B (drug at new dose)
+- **TDM visits:** Repeated outpatient visits, each treated independently
+- **Multi-cycle chemotherapy:** Cycle 1 → rest → Cycle 2 → rest → …
+
+Between occasions the drug washes out completely, so the ODE must **restart
+from a fresh initial condition** at each occasion start rather than continuing
+from the previous state. DeepCompartmentModels.jl handles this via the
+`occasions` keyword on `Individual`.
+
+This tutorial focuses on the **data structure and solving behaviour**, not model
+training. Key concepts:
+
+1. What `occasions` means structurally
+2. How to construct individuals with multiple occasions
+3. How `solve` returns a **vector of solutions** (one per occasion)
+4. How to work with that vector for visualisation and analysis
+
+## Setup
+
+```{julia}
+using DeepCompartmentModels
+using OrdinaryDiffEq
+using CairoMakie
+```
+
+---
+
+## 1 — An individual without occasions (baseline)
+
+First, observe the default behaviour without occasions. A single `solve` call
+returns one solution that spans the entire time horizon — the ODE state carries
+forward continuously, including any residual drug from previous doses.
+
+```{julia}
+# Two doses 96 hours apart — the ODE integrates continuously across the gap
+A_single = Float32[
+    0f0   100f0  200f0  0.5f0   # dose 1 at t=0
+    96f0  100f0  200f0  0.5f0   # dose 2 at t=96h
+]
+cb_single = generate_dosing_callback(A_single, Float32)
+
+t_obs = Float32.(vcat(1:2:24, 97:2:120))   # observations near each dose
+y_obs = zeros(Float32, length(t_obs))
+
+indv_no_occ = Individual(1, Float32[70f0], t_obs, y_obs, cb_single, Float32)
+
+println("Individual type: $(nameof(typeof(indv_no_occ)))")
+println("occasions field: $(indv_no_occ.occasions)")   # Nothing
+
+# Solve with known PK parameters [CL, Vd]
+z = Float32[3.0, 20.0]
+model_1c = DCM(one_comp!, Lux.Chain(Lux.Dense(1, 2, softplus)))
+
+sol_single = solve(model_1c, indv_no_occ, z)
+typeof(sol_single)
+```
+
+```{julia}
+println("Solution type without occasions: $(nameof(typeof(sol_single)))")
+t_sol = Float32.(0:0.5:130)
+conc_single = solve(model_1c.problem, indv_no_occ, z; saveat=t_sol) |>
+    sol -> Array(sol)[1, :] ./ z[2]   # concentration = amount / Vd
+
+fig = Figure(size=(650, 300))
+ax  = Axis(fig[1,1], xlabel="Time (h)", ylabel="Concentration (mg/L)",
+           title="No occasions — ODE runs continuously")
+lines!(ax, t_sol, conc_single; color=:steelblue, linewidth=2)
+vlines!(ax, [96f0]; color=:gray, linestyle=:dash, label="Second dose")
+axislegend(ax)
+fig
+```
+
+Notice how the second dose adds on top of any residual concentration from the
+first period — the ODE state is *not* reset.
+
+---
+
+## 2 — Adding occasions
+
+The `occasions` keyword takes a `Vector{Pair{T,T}}` — each pair defines the
+`(start, end)` time of one occasion. The ODE is restarted with `u0 = 0`
+(or the individual's `u0` field) at the beginning of each occasion.
+
+```{julia}
+# Two treatment periods with full washout between them
+# Period 1: 0 → 72 h  |  wash-out  |  Period 2: 168 → 240 h
+occasions = [0f0 => 72f0, 168f0 => 240f0]
+
+# Each period has its own dose at the start
+A_occ = Float32[
+    0f0    100f0  200f0  0.5f0   # Period 1 dose at t=0
+    168f0  100f0  200f0  0.5f0   # Period 2 dose at t=168h
+]
+cb_occ = generate_dosing_callback(A_occ, Float32)
+
+# Observations within each period
+t_p1 = Float32.(1:4:72)   # period 1
+t_p2 = Float32.(169:4:240)  # period 2
+t_occ_obs = vcat(t_p1, t_p2)
+y_occ_obs = zeros(Float32, length(t_occ_obs))
+
+indv_occ = Individual(2, Float32[70f0], t_occ_obs, y_occ_obs, cb_occ, Float32;
+    occasions = occasions)
+
+println("Individual type: $(nameof(typeof(indv_occ)))")
+println("Number of occasions: $(length(indv_occ.occasions))")
+println("Period 1: $(indv_occ.occasions[1])")
+println("Period 2: $(indv_occ.occasions[2])")
+```
+
+---
+
+## 3 — `solve` returns a Vector of solutions
+
+This is the key structural difference. When `occasions` is set, `solve` returns
+`Vector{DESolution}` — one element per occasion — rather than a single solution.
+
+```{julia}
+sols = solve(model_1c, indv_occ, z)
+
+println("Return type: $(typeof(sols))")
+println("Number of solutions: $(length(sols))")
+println("Solution 1 type: $(nameof(typeof(sols[1])))")
+println("Solution 2 type: $(nameof(typeof(sols[2])))")
+```
+
+```{julia}
+# Each solution spans only its own occasion time window
+println("\nSolution 1 time span: $(sols[1].t[[1,end]])")
+println("Solution 2 time span: $(sols[2].t[[1,end]])")
+```
+
+Each solution starts the ODE fresh from `u0` — there is no accumulation across
+the wash-out period.
+
+---
+
+## 4 — Extracting predictions from each occasion
+
+Work with the vector of solutions by indexing or iterating.
+
+```{julia}
+t_dense_p1 = Float32.(0:0.5:72)
+t_dense_p2 = Float32.(168:0.5:240)
+
+# Re-solve at a dense grid within each period
+sol1 = solve(model_1c.problem, indv_occ, z;
+    saveat = t_dense_p1,
+    callback = cb_occ,
+    tstops   = cb_occ.condition.times,
+)
+sol2 = solve(model_1c.problem, indv_occ, z;
+    saveat = t_dense_p2,
+    callback = cb_occ,
+    tstops   = cb_occ.condition.times,
+)
+
+conc_p1 = Array(sol1)[1, :] ./ z[2]   # amount → concentration
+conc_p2 = Array(sol2)[1, :] ./ z[2]
+
+fig = Figure(size=(750, 350))
+ax  = Axis(fig[1,1], xlabel="Time (h)", ylabel="Concentration (mg/L)",
+           title="With occasions — ODE restarted at each period")
+
+lines!(ax, t_dense_p1, conc_p1; color=:steelblue, linewidth=2, label="Period 1")
+lines!(ax, t_dense_p2, conc_p2; color=:tomato,    linewidth=2, label="Period 2")
+vlines!(ax, [72f0, 168f0]; color=:gray, linestyle=:dash)
+text!(ax, 80f0, maximum(conc_p1)*0.8; text="wash-out", color=:gray)
+axislegend(ax; position=:rt)
+fig
+```
+
+Compare: when occasions are used, Period 2 starts from zero — the wash-out is
+respected. Without occasions, the second dose would add on top of residual drug.
+
+---
+
+## 5 — `predict` and the occasions return structure
+
+`predict` (and `solve_for_target`) also return a vector when called on an
+individual with occasions. The result is `Vector{Vector{T}}` — one concentration
+vector per occasion.
+
+```{julia}
+# predict returns a vector of vectors when occasions are set
+# (because solve_for_target maps _take_target over each DESolution)
+ŷ_occasions = predict(model_1c, indv_occ, (theta=(;), error=(;), omega=Float32[;;], phi=(μ=[zeros(2)], L=[Float32[1f0 0f0;0f0 1f0] |> LowerTriangular])), (theta=(;), phi=(mask=ones(Float32,2,2), epsilon=[zeros(Float32,2)])));
+```
+
+::: {.callout-note}
+In practice, you call `predict` after training a model with `setup` and `fit`.
+The code above is illustrative; see Tutorial 8 for a complete training workflow.
+The important point is that `predict` mirrors the `solve` structure: it returns
+`Vector{Vector{T}}` when occasions are present.
+:::
+
+```{julia}
+# More practical: solve directly with known z
+function predict_occasions(model, indv, z; t_per_occ)
+    results = DESolution[]
+    for (occ, t_occ) in zip(indv.occasions, t_per_occ)
+        _prob = remake(model.problem;
+            tspan = (occ.first - 0.1f0, occ.second),
+            u0    = zeros(Float32, length(model.problem.u0)),
+            p     = vcat(z, 0f0),
+        )
+        sol = solve(_prob, Tsit5();
+            callback = indv.callback,
+            saveat   = t_occ,
+            tstops   = indv.callback.condition.times,
+        )
+        push!(results, sol)
+    end
+    return results
+end
+
+sols_per_occ = predict_occasions(
+    model_1c, indv_occ, z;
+    t_per_occ = [t_dense_p1, t_dense_p2],
+)
+
+println("Returned $(length(sols_per_occ)) solutions, one per occasion")
+```
+
+---
+
+## 6 — Varying parameters across occasions (IOV)
+
+**Inter-occasion variability (IOV)** means PK parameters differ between periods
+for the same patient — e.g. due to food effects, enzyme induction, or
+physiological changes. A simple way to demonstrate this is to use different `z`
+values per occasion when solving manually.
+
+```{julia}
+# Simulate: Period 1 has higher CL (e.g. fed state induces metabolism)
+z_p1 = Float32[3.5, 20.0]   # CL=3.5 in period 1
+z_p2 = Float32[2.5, 20.0]   # CL=2.5 in period 2 (fasted, lower clearance)
+
+function solve_at_density(problem, z, t_dense, cb)
+    prob = remake(problem; u0=zeros(Float32, 1), p=vcat(z, 0f0),
+                  tspan=(-0.1f0, maximum(t_dense)))
+    sol = solve(prob, Tsit5(); callback=cb, saveat=t_dense,
+                tstops=cb.condition.times)
+    return Array(sol)[1, :] ./ z[2]
+end
+
+cb_p1 = generate_dosing_callback(Float32[0f0  100f0  200f0  0.5f0], Float32)
+cb_p2 = generate_dosing_callback(Float32[0f0  100f0  200f0  0.5f0], Float32)
+
+conc_iov_p1 = solve_at_density(model_1c.problem, z_p1, Float32.(0:0.5:72),  cb_p1)
+conc_iov_p2 = solve_at_density(model_1c.problem, z_p2, Float32.(0:0.5:72),  cb_p2)
+
+fig = Figure(size=(600, 330))
+ax  = Axis(fig[1,1], xlabel="Time within occasion (h)", ylabel="Concentration (mg/L)",
+           title="IOV: same dose, different CL per occasion")
+lines!(ax, Float32.(0:0.5:72), conc_iov_p1; color=:steelblue, linewidth=2, label="Period 1 (CL=3.5)")
+lines!(ax, Float32.(0:0.5:72), conc_iov_p2; color=:tomato,    linewidth=2, label="Period 2 (CL=2.5)")
+axislegend(ax)
+fig
+```
+
+---
+
+## 7 — Building a crossover population
+
+A realistic crossover dataset has each subject completing two treatment periods.
+Here is the full construction pattern:
+
+```{julia}
+function make_crossover_individual(id, weight, dose_p1, dose_p2, t_p1, t_p2, y_p1, y_p2,
+                                    ::Type{T}=Float32) where T
+    # Both doses described in a single callback
+    A = T[0f0    dose_p1  dose_p1/(T(0.5))  T(0.5)
+          168f0  dose_p2  dose_p2/(T(0.5))  T(0.5)]
+    cb = generate_dosing_callback(A, T)
+
+    # Observation times and data from both periods
+    t_all = vcat(T.(t_p1), T.(t_p2))
+    y_all = vcat(T.(y_p1), T.(y_p2))
+
+    occasions = [T(0) => T(72), T(168) => T(240)]
+
+    return Individual(id, T[weight], t_all, y_all, cb, T; occasions=occasions)
+end
+
+# Simulate some crossover subjects
+function sim_crossover(id, weight)
+    CL  = Float32(2.5 * (weight/70)^0.75)
+    Vd  = Float32(20.0 * (weight/70))
+    k   = CL / Vd
+
+    t_obs = Float32.(1:6:72)
+
+    # Period 1: 100 mg
+    conc_p1 = (100f0/Vd) .* exp.(-k .* t_obs) .+ 0.1f0 .* randn(Float32, length(t_obs))
+
+    # Period 2: 150 mg
+    conc_p2 = (150f0/Vd) .* exp.(-k .* t_obs) .+ 0.1f0 .* randn(Float32, length(t_obs))
+
+    t_p2 = t_obs .+ 168f0   # shifted to Period 2 clock time
+
+    return make_crossover_individual(id, Float32(weight),
+        100f0, 150f0,
+        t_obs, t_p2,
+        max.(conc_p1, 0f0), max.(conc_p2, 0f0))
+end
+
+crossover_pop = Population([sim_crossover(i, 55 + 5*i) for i in 1:8])
+println("Crossover population: $(length(crossover_pop)) subjects")
+println("Subjects with occasions: $(sum(!isnothing(indv.occasions) for indv in crossover_pop))")
+println("Periods per subject: $(length(crossover_pop[1].occasions))")
+```
+
+---
+
+## Summary
+
+| Concept | Code |
+|---|---|
+| Add occasions | `Individual(id, x, t, y, cb, T; occasions=[t1=>t2, t3=>t4])` |
+| No occasions | `solve` returns `DESolution` |
+| With occasions | `solve` returns `Vector{DESolution}`, one per period |
+| `predict` return | `Vector{T}` (no occasions) or `Vector{Vector{T}}` (with occasions) |
+| ODE restart | Fresh `u0` at each occasion start — no accumulation across wash-out |
+| IOV | Apply different `z` per occasion when calling `solve` directly |

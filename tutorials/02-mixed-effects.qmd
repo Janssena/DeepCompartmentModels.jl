@@ -1,0 +1,216 @@
+---
+title: "Mixed effects with the variational ELBO"
+subtitle: "Inter-individual variability on top of the covariate model, fitted on warfarin"
+format:
+  html:
+    toc: true
+    code-fold: false
+jupyter: julia-1.10
+---
+
+The model in the first tutorial maps covariates to parameters deterministically, so two
+patients with the same weight get the same curve. Real patients differ for reasons the
+covariates do not capture. The standard pharmacometric answer is a *mixed-effects model*:
+every individual `i` gets random effects `ηᵢ`, and their parameters are
+
+```math
+z_i = \zeta(x_i) \cdot \exp(\eta_i), \qquad \eta_i \sim \mathcal{N}(0, \Omega),
+```
+
+where `ζ(x)` is the output of the neural network (the *typical* parameters) and `Ω` the
+covariance of the random effects. Together with a residual error model this defines a
+likelihood. Here the random effects are inferred with variational inference: each
+individual gets a Gaussian posterior `q(ηᵢ) = N(μᵢ, Lᵢ Lᵢᵀ)`, and the network weights,
+the posteriors and the error parameters are trained jointly by maximising the evidence
+lower bound (ELBO).
+
+```{julia}
+using DeepCompartmentModels
+using DataFrames, CSV
+using CairoMakie
+using Random
+using Statistics: mean
+```
+
+## Data
+
+We use the warfarin concentrations, loaded as in the [data tutorial](05-loading-data.md).
+
+```{julia}
+warfarin = DataFrame(CSV.File(joinpath(@__DIR__, "..", "data", "warfarin.csv")))
+warfarin = warfarin[warfarin.DVID .== 1, :]
+
+function make_individual(g)
+    covariates = Float32[g.WEIGHT[1], g.AGE[1], g.SEX[1]]
+    doses = Matrix{Float32}(g[g.MDV .== 1, [:TIME, :DOSE, :RATE, :DURATION]])
+    obs = g[g.MDV .== 0, :]
+    return Individual(g.ID[1], covariates, obs.TIME, obs.DV, generate_dosing_callback(doses))
+end
+
+population = Population([make_individual(g) for g in groupby(warfarin, :ID)])
+length(population)
+```
+
+## Model
+
+A one-compartment model with first-order absorption, parameters `[kₐ, CL, V]`, and a
+network from weight, age and sex. The final layer scales the outputs to plausible
+magnitudes for warfarin (clearance around 0.1 L/h, volume around 10 L).
+
+```{julia}
+ann = Lux.Chain(
+    Normalize(Float32[100, 100, 1]),
+    Lux.Dense(3, 16, tanh),
+    Lux.Dense(16, 3, Lux.softplus),
+    Lux.WrappedFunction(x -> x .* Float32[1, 0.2, 10]),
+)
+
+problem = ODEProblem(one_comp_abs!, zeros(Float32, 2), (-0.1f0, 1f0); dt = 0.01f0)
+model = DCM(problem, ann, ProportionalError(0.2f0); target = 2)
+```
+
+The third argument is the residual error model. `ProportionalError(0.2f0)` says that
+the standard deviation of the observation noise is proportional to the prediction, and
+`0.2` is the starting value of that proportion. `AdditiveError` and `CombinedError`
+(additive plus proportional) work the same way.
+
+## Step 1: warm-start the typical parameters
+
+Mixed-effects fits are sensitive to where they start. A common trick is to first fit the
+network without random effects, using the sum of squared errors, and start the
+mixed-effects fit from those weights.
+
+```{julia}
+function train(objective, model, population, ps, st; epochs, lr, refresh = nothing)
+    opt_state = Optimisers.setup(Optimisers.Adam(lr), ps)
+    losses = Float32[]
+    for _ in 1:epochs
+        isnothing(refresh) || refresh(st)
+        ∇ = gradient(objective, model, population, ps, st)
+        opt_state, ps = Optimisers.update(opt_state, ps, ∇)
+        push!(losses, objective(model, population, ps, st))
+    end
+    return ps, losses
+end
+
+rng = Random.Xoshiro(1)
+model_fixed = DCM(problem, ann; target = 2)    # no error model needed for SSE
+ps_fixed, st_fixed = setup(SSE(), rng, model_fixed)
+ps_fixed, losses_fixed = train(SSE(), model_fixed, population, ps_fixed, st_fixed; epochs = 150, lr = 0.02f0)
+losses_fixed[[1, end]]
+```
+
+## Step 2: the mixed-effects model
+
+`VariationalELBO(idxs)` takes the indices of the ODE parameters that get a random effect.
+Here all three do: `1` is `kₐ`, `2` is `CL` and `3` is `V`.
+
+```{julia}
+objective = VariationalELBO([1, 2, 3])
+ps, st = setup(objective, rng, model, population; init_omega = 0.1)
+keys(ps), keys(st)
+```
+
+The parameters now hold, next to the network weights `theta`:
+
+- `error`: the residual error parameters,
+- `omega`: the covariance `Ω` of the random effects (here `0.1` on the diagonal),
+- `phi`: the variational posterior of every individual, a mean `μ` and a Cholesky factor `L`.
+
+The state `st` holds the noise `epsilon` used to sample from the posteriors. Resample it
+before each gradient step with `update_epsilon!`. We copy the pre-trained network weights
+in, and train.
+
+```{julia}
+ps = merge(ps, (theta = ps_fixed.theta,))
+
+ps, losses = train(objective, model, population, ps, st; epochs = 200, lr = 0.01f0,
+                   refresh = st -> update_epsilon!(rng, st))
+losses[[1, 50, 100, 200]]
+```
+
+The loss is the negative ELBO, estimated with one Monte Carlo sample per step, hence it
+fluctuates.
+
+```{julia}
+fig = Figure(size = (500, 300))
+ax = Axis(fig[1, 1]; xlabel = "Epoch", ylabel = "Negative ELBO")
+lines!(ax, losses)
+fig
+```
+
+## Step 3: update Ω and the error model
+
+The gradient steps above do not update `omega`, which is estimated in a separate *M-step*,
+as in classical EM algorithms for mixed-effects models: it is set to the second moment of
+the variational posteriors. `m_step` does this, and also re-estimates the residual error
+parameters.
+
+```{julia}
+ps_before = ps
+ps = m_step(objective, rng, model, population, ps, st; epochs = 20, num_samples = 20, verbose = false)
+(omega_before = [ps_before.omega[i, i] for i in 1:3], omega_after = [ps.omega[i, i] for i in 1:3])
+```
+
+Alternating gradient steps and M-steps a few times is the usual recipe. Here one round
+is enough for the demonstration.
+
+## Predictions
+
+By default `predict` uses each individual's own posterior (`individual = true`). With
+`individual = false` it uses the typical parameters `ζ(x)` only. The posterior is a
+distribution, so for a point prediction we set the noise to zero, which evaluates the
+posterior mean.
+
+```{julia}
+st_mean = deepcopy(st)
+foreach(e -> e .= 0, st_mean.phi.epsilon)
+
+ŷ_individual = predict(model, population, ps, st_mean)
+ŷ_typical = predict(model, population, ps, st_mean; individual = false)
+
+rmse(ŷ) = sqrt(mean(reduce(vcat, [(a .- b) .^ 2 for (a, b) in zip(ŷ, get_y(population))])))
+(typical = rmse(ŷ_typical), individual = rmse(ŷ_individual))
+```
+
+The individual predictions have a clearly lower error, as they should: they use information from
+the individual's own observations. Plotting a few subjects on a fine time grid needs the
+parameters of just that subject. `take_batch` slices `ps` and `st` for a set of
+individuals:
+
+```{julia}
+grid = Float32.(0:2:120)
+
+function curves(i)
+    ps_i, st_i = take_batch(ps, st_mean, [i])
+    individual = predict(model, population[i:i], ps_i, st_i; saveat = grid)[1]
+    typical = predict(model, population[i:i], ps_i, st_i; individual = false, saveat = grid)[1]
+    return individual, typical
+end
+
+fig = Figure(size = (900, 500))
+for (k, i) in enumerate([1, 5, 9, 13, 17, 21, 25, 29])
+    local ax = Axis(fig[fld(k - 1, 4) + 1, mod1(k, 4)]; title = "ID $(population[i].id)",
+              xlabel = k > 4 ? "Time (h)" : "", ylabel = mod1(k, 4) == 1 ? "mg/L" : "")
+    individual, typical = curves(i)
+    lines!(ax, grid, typical; color = :gray, linestyle = :dash)
+    lines!(ax, grid, individual; color = :firebrick)
+    scatter!(ax, get_t(population[i]), get_y(population[i]); color = :black, markersize = 6)
+end
+fig
+```
+
+The dashed gray line is the typical prediction for the covariates of that subject, the red line
+the individual prediction. The random effects themselves, one row per parameter, one column
+per individual, are available from `get_random_effects`:
+
+```{julia}
+η = get_random_effects(ps, st_mean)
+(mean_η = vec(mean(η; dims = 2)), sd_η = vec(sqrt.(mean(abs2, η; dims = 2))))
+```
+
+::: {.callout-note}
+This is a short run to show the mechanics. In practice, train for more epochs with a
+decaying learning rate, check that the ELBO has flattened, and alternate gradient steps
+with `m_step` until `omega` stops moving.
+:::
