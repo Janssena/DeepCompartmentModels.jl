@@ -49,7 +49,6 @@ makedocs(;
         "Home" => "index.md",
         "Tutorials" => ["Overview" => "tutorials/index.md"; tutorial_pages],
         "Status and limitations" => "limitations.md",
-        "Developer notes" => ["UDE review" => "dev/ude-review.md"],
         "API reference" => "api.md",
     ],
 )
