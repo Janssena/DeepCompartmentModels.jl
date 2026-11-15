@@ -10,17 +10,18 @@ out not to work. They are listed here so that nobody has to rediscover them. Eac
 symptom and the cause found in the source, to make fixing them quick.
 
 !!! note "Training loop"
-    There is no `fit` function. `src/lib/optimization.jl` defines one, but the file is not included by
-    `src/DeepCompartmentModels.jl`, and it uses `setup(objective, model)` without an `rng`, which no longer
-    exists. `fit` in the package namespace is `Distributions.fit`. The tutorials therefore train with a
-    short loop around [`gradient`](@ref) and `Optimisers.update`, which is what `fit` would do anyway.
+    [`fit`](@ref) runs the training loop (setup, [`gradient`](@ref), `Optimisers.update`). It supports the
+    fixed effect objectives (`MSE`, `SSE`, `LogLikelihood`) and `VariationalELBO`, see the entries below
+    for the exceptions. The tutorials write the loop out explicitly, because that shows what each step
+    does; `fit` does the same.
 
 ## Not working at the moment
 
 | feature | symptom | cause |
 |:--|:--|:--|
 | `load(df, covariates)` | `MethodError: no method matching Individual(::Vector{Float32}, ...)` | `ext/DCMDataFramesExt.jl` calls `Individual(x, t, y, cb; id = ...)`, but the constructor is `Individual(id, x, t, y, cb, T)`. It also requires an `MDV` column. The [data tutorial](generated/05-loading-data.md) shows the equivalent loop. |
-| Universal differential equations (`UniversalDiffEq`) | `MethodError: no method matching build_problem(...)` when computing predictions or gradients | `build_problem` is defined with four arguments `(ude, model, ps, st)` but called with three in `src/lib/ude.jl`. `setup` works. |
+| `VariationalELBO(idxs; path_deriv = false)` | `MethodError: no method matching _Diagonal_pullback(::NoTangent)` from `gradient` | Zygote fails in a `Diagonal` pullback (probably from the covariance built in `getq`) when the path derivative estimator is switched off. The default `path_deriv = true` works. |
+| `VariationalELBO(idxs; natural = true)` | `MethodError: no method matching _value_and_gradient(::VariationalELBO{False, True, True}, ...)` from `gradient` and `fit` | there are gradient methods for `natural = false` only. The objective itself also fails: `kldivergence` calls `getprior`, which is not defined. |
 | Several outputs (`MOIndividual`, `ErrorModelSet`, `target = [2, 3]`) | `MethodError: no method matching get_x(::Population{MOIndividual...})` | `get_x` and the related methods in `src/lib/population.jl` are only defined for `BasicIndividual` and `TimeVariableIndividual` populations. |
 | Occasions (`occasions = [0.0 => 23.0, ...]`) | `MethodError: no method matching _take_target(::Vector{ODESolution}, ...)` in `predict` | the solve returns one solution per occasion, and `_take_target` has no method that takes the individual together with a vector of solutions. |
 | Time-varying covariates (`TimeVariableIndividual`) | `BoundsError` in `one_comp_abs!` when computing the objective | not investigated in depth. `unpack(p::AbstractMatrix, t)` expects the first row of the parameter matrix to hold time points and drops it, which suggests the matrix built for these individuals does not follow that layout. |
@@ -40,21 +41,31 @@ symptom and the cause found in the source, to make fixing them quick.
 - The time span of an `ODEProblem` has to start before the first dose (the default of
   `DCM(ode_fn, ...)` is `-0.1`), otherwise a dose at `t = 0` is silently never given and all
   predictions are zero.
+- For a `UniversalDiffEq` with at least 256 parameters the default `sensealg` is `GaussAdjoint(; autojacvec = ReverseDiffVJP(false))`,
+  which is much faster than forward sensitivities for large networks (5x at ~1,000 and 50x at ~4,000 parameters). Its gradients
+  differ from the forward ones by ~2e-4 (relative), and Lux logs a one-time warning about `ReverseDiff.TrackedReal` inputs.
+  Pass `sensealg = ForwardDiffSensitivity()` to use forward sensitivities regardless of the size. Do not use
+  `ReverseDiffVJP(true)` (compiled tape) with in-place UDEs: it returned a wrong gradient in a test. `InterpolatingAdjoint(; autojacvec = EnzymeVJP())`
+  is another 1.5-2.5x faster and gave correct gradients, at the cost of a longer compilation.
 - The ODE solver logs a `dt_epsilon` warning for every solve when the initial state is zero. Setting an
   initial step with `ODEProblem(...; dt = 0.01f0)` avoids thousands of warnings during training.
 - `make_etas` is exported but not defined.
-- `predict(model, individual, ps, st)` for a single individual fails when `ps` contains random effects for the
-  whole population. Slice the parameters with `take_batch` and predict for a one-element population, as in the
-  [mixed-effects tutorial](generated/02-mixed-effects.md).
+- `predict(model, individual, ps, st)` for a single individual fails whenever `ps` contains random effects
+  (`MethodError: no method matching construct_p(::Matrix, ::BasicIndividual)`), also after slicing the
+  parameters with `take_batch`. Predict for a one-element population instead, `predict(model, population[[i]], ps_i, st_i)`
+  with `ps_i, st_i = take_batch(ps, st, [i])`, as in the [mixed-effects tutorial](generated/02-mixed-effects.md).
 - `target` defaults to `1`. For models with an absorption compartment the observed concentration is
   state 2, so set `target = 2`.
 - Many exported functions have no docstring yet (see the [API reference](api.md)).
-- The tests in `test/lib` refer to an older interface (`make_etas`, `FullRank()`, `update_state_epsilon`) and do not
-  run against the current source.
+- `UniversalDiffEq` models only support the fixed effect objectives (`MSE`, `SSE`, `LogLikelihood`), not
+  `VariationalELBO`.
+- Five test files in `test/lib` (`objectives`, `initializers`, `mixed_effects`, `model`, `dcm`) refer to an older
+  interface (`make_etas`, `init_omega`, `forward_ode`, ...) and do not run against the current source. They are
+  skipped by `runtests.jl` unless `DCM_LEGACY_TESTS=true`.
 
 ## Notebooks that are kept but not built
 
-The notebooks in `tutorials/` that are not part of this site (`03-universal-diffeq`, `08-end-to-end`,
-`09-counterfactual`, `10-pkpd` and `11-occasions`) were written for an earlier interface and rely on the
-features in the first table. They are left in place and can be brought back by listing them in `TUTORIALS`
+The notebooks in `tutorials/` that are not part of this site (`08-end-to-end`, `09-counterfactual`,
+`10-pkpd` and `11-occasions`) were written for an earlier interface and rely on the features in the
+first table. They are left in place and can be brought back by listing them in `TUTORIALS`
 in `docs/make.jl` once those features work again.

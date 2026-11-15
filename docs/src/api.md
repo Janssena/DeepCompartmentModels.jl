@@ -4,7 +4,8 @@
 CurrentModule = DeepCompartmentModels
 ```
 
-The names below are exported by `using DeepCompartmentModels`. The package also re-exports
+The names below are exported by `using DeepCompartmentModels`, except `ImplicitError`, which is used as
+`DeepCompartmentModels.ImplicitError`. The package also re-exports
 [Lux.jl](https://lux.csail.mit.edu), [Optimisers.jl](https://github.com/FluxML/Optimisers.jl),
 [Accessors.jl](https://github.com/JuliaObjects/Accessors.jl),
 [Distributions.jl](https://github.com/JuliaStats/Distributions.jl),
@@ -51,7 +52,8 @@ SNN
 | name | description |
 |:--|:--|
 | `AbstractModel`, `AbstractDEModel` | supertypes of the models |
-| `UniversalDiffEq`, `BasicUDE`, `TimeConcatUDE` | neural network right-hand sides (universal differential equations), see [Status and limitations](limitations.md) |
+| `AbstractUDEType` | supertype of `BasicUDE` and `TimeConcatUDE` |
+| `UniversalDiffEq`, `BasicUDE`, `TimeConcatUDE` | neural network right-hand sides (universal differential equations), only for the fixed effect objectives, see the [tutorial](generated/03-universal-diffeq.md) |
 
 ### Prediction
 
@@ -59,6 +61,7 @@ SNN
 predict
 solve_for_target
 construct_p
+build_problem
 ```
 
 | function | description |
@@ -126,10 +129,13 @@ Building blocks of the ELBO:
 
 ## Setting up and training
 
-There is no single `fit` function; training is a loop over [`gradient`](@ref) and an Optimisers.jl
-update, as shown in the [first tutorial](generated/01-basic-dcm.md).
+[`fit`](@ref) trains a model with an Optimisers.jl rule. It is a thin wrapper around [`setup`](@ref),
+[`gradient`](@ref) and `Optimisers.update`; the [first tutorial](generated/01-basic-dcm.md) writes that loop
+out explicitly.
 
 ```@docs
+fit(::AbstractObjective, ::AbstractDEModel, ::Population, ::Optimisers.AbstractRule)
+update_state
 setup
 gradient
 ```
@@ -144,7 +150,9 @@ gradient
 | `m_step(objective, rng, model, population, ps, st; epochs, num_samples, verbose)` | update the residual error and `Ω` from the variational posteriors |
 | `optimise_omega(ps)` | `Ω` implied by the variational posteriors |
 | `optimise_residual_error(...)` | optimise the residual error parameters with the posteriors fixed |
-| `MeanSqrt()`, `MeanVar()` | parameterisations of the posterior covariances, the `params` keyword of `setup` |
+| `Parameterisation`, `MeanSqrt()`, `MeanVar()` | parameterisations of the posterior covariances, the `params` keyword of `setup` |
+| `sample_gaussian(ps, st)` | draw the random effects from the variational posteriors, using the noise stored in `st` |
+| `residual_error_value_and_gradient(rng, model, data, ps, st; mode, num_samples)` | value of the objective for the residual error parameters and its gradient, with the posteriors fixed |
 
 ## Lux layers
 

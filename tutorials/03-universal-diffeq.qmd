@@ -83,10 +83,11 @@ dcm = DeepCompartmentModel(ude, nn)
 The `sensealg` of the model decides how gradients are propagated through the ODE
 solver. For small networks (fewer than ~250 parameters) forward-mode sensitivities
 (`ForwardDiffSensitivity`) are fastest; for larger networks an adjoint method scales
-better. `DeepCompartmentModel` picks `GaussAdjoint(; autojacvec = ReverseDiffVJP(true))`
-for larger UDEs, and you can always pass your own with `sensealg = ...`. The compiled
-`ReverseDiffVJP(true)` is only valid when the right-hand side has no branches that
-depend on the values of the states or parameters.
+better. `DeepCompartmentModel` picks `GaussAdjoint(; autojacvec = ReverseDiffVJP(false))`
+for larger UDEs, and you can always pass your own with `sensealg = ...`. Avoid the compiled
+`ReverseDiffVJP(true)`: it is slower here, and a compiled tape is only valid when the
+right-hand side has no branches that depend on the values of the states or parameters.
+`InterpolatingAdjoint(; autojacvec = EnzymeVJP())` is faster still, but compiles for longer.
 :::
 
 ## Initialise and fit
