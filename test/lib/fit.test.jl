@@ -76,6 +76,36 @@ end
         @test ∇.theta == gradient(obj, dcm, population, ps, st).theta
     end
 
+    @testset "keywords" begin
+        silent = (args...) -> nothing
+        opt = Optimisers.Adam(1f-2)
+        ps, st = setup(SSE(), Random.Xoshiro(3), dcm)
+        opt_state = Optimisers.setup(opt, ps)
+
+        # unknown keywords are not ignored, for every method of fit
+        @test_throws ArgumentError fit(SSE(), dcm, population, opt; epochs = 1, callback = silent, bogus = 1)
+        @test_throws ArgumentError fit(SSE(), dcm, population, opt, ps, st; epochs = 1, callback = silent, bogus = 1)
+        @test_throws ArgumentError fit(SSE(), dcm, population, opt_state, ps, st; epochs = 1, callback = silent, bogus = 1)
+        err = try fit(SSE(), dcm, population, opt; epochs = 1, callback = silent, batch_size = 4); nothing catch e; e end
+        @test err isa ArgumentError && occursin("batch_size", err.msg)
+
+        # keywords of setup only apply when ps and st are created by fit
+        @test_throws ArgumentError fit(SSE(), dcm, population, opt, ps, st; epochs = 1, callback = silent, init_sigma = [2f0])
+        @test_throws ArgumentError fit(SSE(), dcm, population, opt; epochs = 1, callback = silent, init_omega = 0.5) # SSE has no random effects
+
+        # keywords of setup are passed on
+        _, ps_sigma, _ = fit(LogLikelihood(), dcm, population, opt; epochs = 0, init_sigma = [3f0])
+        @test Lux.softplus.(ps_sigma.error.σ) ≈ [3f0]
+        _, ps_omega, _ = fit(VariationalELBO([1, 2]), dcm, population, opt; epochs = 0, init_omega = 0.5)
+        @test [ps_omega.omega[i, i] for i in 1:2] ≈ fill(0.5, 2)
+
+        # element type
+        _, ps32, _ = fit(SSE(), dcm, population, opt; epochs = 0)
+        _, ps64, _ = fit(SSE(), dcm, population, opt; epochs = 0, T = Float64)
+        @test eltype(ps32.theta.layer_1.weight) == Float32
+        @test eltype(ps64.theta.layer_1.weight) == Float64
+    end
+
     @testset "VariationalELBO uses the given rng" begin
         obj = VariationalELBO([1, 2])
         function losses(; setup_seed, fit_seed, with_state)

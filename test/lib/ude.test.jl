@@ -160,6 +160,24 @@ _ude_nn(h = 8) = Lux.Chain(Lux.Dense(1, h, tanh), Lux.Dense(h, h, tanh), Lux.Den
         ∇_adj = _gradient(SSE(), dcm_adj, population, ps, st)
 
         @test maximum(abs, ∇_adj.theta .- ∇_fwd.theta) / maximum(abs, ∇_fwd.theta) < 1e-2
+
+        # the default for larger networks (GaussAdjoint) is accurate too
+        dcm_fwd_large = DeepCompartmentModel(UniversalDiffEq(1), _ude_nn(16); sensealg = ForwardDiffSensitivity())
+        dcm_default_large = DeepCompartmentModel(UniversalDiffEq(1), _ude_nn(16))
+        @test dcm_default_large.sensealg isa GaussAdjoint
+        ps_large, st_large = setup(SSE(), rng, dcm_fwd_large)
+        ∇_fwd_large = _gradient(SSE(), dcm_fwd_large, population, ps_large, st_large)
+        ∇_default_large = _gradient(SSE(), dcm_default_large, population, ps_large, st_large)
+        @test maximum(abs, ∇_default_large.theta .- ∇_fwd_large.theta) / maximum(abs, ∇_fwd_large.theta) < 5e-3
+
+        # the compiled tape (ReverseDiffVJP(true)) returned a wrong gradient for in-place problems of this
+        # size, so the default must not use it
+        @test dcm_default_large.sensealg.autojacvec isa ReverseDiffVJP{false}
+        dcm_ip_fwd = DeepCompartmentModel(UniversalDiffEq(1; inplace = true), _ude_nn(16); sensealg = ForwardDiffSensitivity())
+        dcm_ip_default = DeepCompartmentModel(UniversalDiffEq(1; inplace = true), _ude_nn(16))
+        ∇_ip_fwd = _gradient(SSE(), dcm_ip_fwd, population, ps_large, st_large)
+        ∇_ip_default = _gradient(SSE(), dcm_ip_default, population, ps_large, st_large)
+        @test maximum(abs, ∇_ip_default.theta .- ∇_ip_fwd.theta) / maximum(abs, ∇_ip_fwd.theta) < 5e-3
     end
 
     @testset "in-place problems" begin
