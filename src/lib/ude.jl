@@ -24,8 +24,51 @@ function build_problem(ude::UniversalDiffEq{P}, model::Lux.AbstractLuxLayer, ps,
     return remake(ude.problem, f = dudt)
 end
 
+<<<<<<< Updated upstream
 (::UniversalDiffEq{P,T})(model, u, p, t) where {P,T<:BasicUDE} = [p.I; zeros(eltype(u), length(u) - 1)] .+ model(u, p)
 (::UniversalDiffEq{P,T})(model, u, p, t) where {P,T<:TimeConcatUDE} = [p.I; zeros(eltype(u), length(u) - 1)] .+ model(_concat(u, t), p)
+=======
+# For UDEs the neural network is part of the right-hand side, so the number of parameters is
+# typically much larger. In a micro benchmark (one-compartment UDE, 8 individuals, Float32) forward
+# sensitivities and adjoints were equally fast at ~320 parameters; the adjoint was ~5x faster at ~1,150
+# and ~50x faster at ~4,350 parameters, and about 4x slower below ~100. The adjoint gradient differs
+# from the forward one by ~2e-4 (relative). The break-even is at roughly 250 parameters.
+#
+# The vector-Jacobian products use ReverseDiffVJP(false), i.e. an uncompiled tape. The compiled tape
+# (ReverseDiffVJP(true)) was 1.7-2.5x slower, and for an in-place UDE with 321 parameters it returned a
+# wrong gradient (relative error 0.99 against forward sensitivities).
+# InterpolatingAdjoint(; autojacvec = EnzymeVJP()) is another 1.5-2.5x faster and gave correct
+# gradients, but needs up to a minute of compilation and is more fragile (GaussAdjoint with EnzymeVJP
+# fails), so it is not the default.
+const UDE_ADJOINT_MIN_PARAMS = 256
+
+_default_sensealg(::UniversalDiffEq{P,<:Union{BasicUDE,TimeConcatUDE}}, model::Lux.AbstractLuxLayer) where P = 
+    Lux.parameterlength(model) >= UDE_ADJOINT_MIN_PARAMS ? GaussAdjoint(; autojacvec = ReverseDiffVJP(false)) : ForwardDiffSensitivity()
+
+# The state returned by `setup` is `(theta = <Lux state>, ...)`, but `build_problem` needs the Lux
+# state of the model. Accept both so callers can pass either.
+_layer_state(st::NamedTuple) = haskey(st, :theta) ? st.theta : st
+
+# The infusion rate `I` is added to the first state, i.e. du = [I, 0, ...] + model(u, p). Doing this
+# in a single fused broadcast avoids the temporaries of `[p.I; zeros(...)] .+ model(...)`.
+_add_infusion(du, I) = du .+ ifelse.(eachindex(du) .== 1, I, zero(I))
+
+(::UniversalDiffEq{P,T})(model, u, p, t) where {P,T<:BasicUDE} = _add_infusion(model(u, p), p.I)
+(::UniversalDiffEq{P,T})(model, u, p, t) where {P,T<:TimeConcatUDE} = _add_infusion(model(_concat(u, t), p), p.I)
+
+# In-place versions, used when the problem is created with `UniversalDiffEq(n; inplace = true)`.
+function (::UniversalDiffEq{P,T})(model, du, u, p, t) where {P,T<:BasicUDE}
+    du .= model(u, p)
+    du[1] += p.I
+    return nothing
+end
+
+function (::UniversalDiffEq{P,T})(model, du, u, p, t) where {P,T<:TimeConcatUDE}
+    du .= model(_concat(u, t), p)
+    du[1] += p.I
+    return nothing
+end
+>>>>>>> Stashed changes
 
  # TODO: versions for images
 _concat(u::Union{Real, AbstractVector}, t::Real) = [u; t]
@@ -70,7 +113,23 @@ function solve_for_target(
     return _take_target(sol, individual, dcm.target)
 end
 
+<<<<<<< Updated upstream
 SciMLBase.solve(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual, ps::NamedTuple; kwargs...) = 
+=======
+"""
+    predict(dcm::DeepCompartmentModel{<:UniversalDiffEq}, data, ps, st; target = true, kwargs...)
+
+Solve the UDE and return the predicted observations (`target = true`) or the full solution(s)
+(`target = false`). Unlike the parameter-network based DCM, a UDE has no per-individual
+parameters to predict, so the `individual` keyword of the generic `predict` does not apply.
+`kwargs` (e.g. `saveat`) are forwarded to `solve`.
+"""
+function predict(dcm::DeepCompartmentModel{<:UniversalDiffEq}, data, ps, st; target = true, individual = nothing, kwargs...)
+    return target ? solve_for_target(dcm, data, ps, st; kwargs...) : solve(dcm, data, ps, st; kwargs...)
+end
+
+SciMLBase.solve(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual, ps::NamedTuple; kwargs...) =
+>>>>>>> Stashed changes
     solve(prob, individual, ps.theta; kwargs...)
 
 function Base.summary(io::IO, ude::UniversalDiffEq)

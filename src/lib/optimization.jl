@@ -5,9 +5,15 @@
 default_callback(epoch, loss) = println("Epoch $epoch, loss = $loss")
 
 """
+<<<<<<< Updated upstream
     fit(obj, model, data, opt; epochs, callback, kwargs...)
     fit(obj, model, data, opt, ps, st; epochs, callback, kwargs...)
     fit(obj, model, data, opt_state, ps, st; epochs, callback, kwargs...)
+=======
+    fit(obj, model, population, opt; rng, T, epochs, callback, parallel, batchsize, nbatch, init_sigma, params, ...)
+    fit(obj, model, population, opt, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
+    fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
+>>>>>>> Stashed changes
 
 Optimise `model` parameters by minimising `obj` on `data` using optimizer `opt`.
 
@@ -23,9 +29,24 @@ state is initialised from the rule and `ps`.
 - `ps`: Model parameters returned by `setup`.
 - `st`: Model state returned by `setup`.
 
-## Keyword Arguments
-- `epochs=100`: Number of gradient descent steps.
-- `callback`: Called each epoch as `callback(epoch, loss)`. Defaults to printing.
+## Keyword arguments
+- `epochs = 100`: Number of gradient steps.
+- `callback`: Called after each step as `callback(epoch, loss)`, where `loss` is the objective evaluated
+  at the parameters used for that step. Defaults to printing. Use `callback = (args...) -> nothing` to
+  silence it. The loss is a by-product of the gradient computation and costs no extra solve.
+- `T = Float32`: Element type of the parameters created by `setup` (`Float16`, `Float32` or `Float64`). Only when
+  `ps` and `st` are not given, otherwise the types of `ps` are used.
+- `rng = Random.default_rng()`: Random number generator used by `setup` (when `ps` and `st` are not given)
+  and, for `VariationalELBO`, to resample the noise of the variational posteriors every epoch. Pass a
+  seeded `rng` to make a fit reproducible.
+- `parallel = false`, `batchsize = nothing`, `nbatch = nothing`: Passed to `gradient`. `parallel = :individual`
+  solves individuals on separate threads (start Julia with `-t auto`), `parallel = :batch` does so per
+  mini-batch of `batchsize` individuals (at most) or in `nbatch` mini-batches; set at most one of them
+  (default `batchsize = 16`). The batches are drawn using `rng`.
+- `init_sigma`, `params` and, for `VariationalELBO`, `init_omega` and `scale`: passed on to `setup`, see there.
+  Only when `ps` and `st` are not given.
+
+Any other keyword throws an `ArgumentError`.
 
 ## Returns
 `(opt_state, ps, st)` — the final optimiser state, parameters, and model state.
@@ -38,6 +59,7 @@ opt = Adam(1e-3)
 opt_state, ps, st = fit(obj, model, population, opt; epochs=500)
 ```
 """
+<<<<<<< Updated upstream
 function fit(obj::AbstractObjective, model, data, opt::Optimisers.AbstractRule; kwargs...)
     ps, st = setup(obj, model)
     opt_state = Optimisers.setup(opt, ps)
@@ -65,6 +87,59 @@ end
 
 function _run_optimization(obj, model, data, opt_state, ps, st; epochs, callback, kwargs...)
     try 
+=======
+function fit(
+        obj::AbstractObjective, model::AbstractDEModel, population::Population, opt::Optimisers.AbstractRule;
+        rng::Random.AbstractRNG = Random.default_rng(), T::Type{<:Real} = Float32, epochs = 100, callback = default_callback,
+        parallel = false, batchsize = nothing, nbatch = nothing, kwargs...
+    )
+    _check_keywords(kwargs, _setup_keywords(obj), "These are the keywords of `setup` that `fit` passes on.")
+    ps, st = _setup_for_fit(obj, rng, model, population, T; kwargs...)
+    opt_state = Optimisers.setup(opt, ps)
+    return _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
+end
+
+function fit(
+        obj::AbstractObjective, model::AbstractDEModel, population::Population, opt::Optimisers.AbstractRule, ps, st;
+        rng::Random.AbstractRNG = Random.default_rng(), epochs = 100, callback = default_callback,
+        parallel = false, batchsize = nothing, nbatch = nothing, kwargs...
+    )
+    _check_keywords(kwargs, (), _PS_GIVEN_HINT)
+    opt_state = Optimisers.setup(opt, ps)
+    return _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
+end
+
+function fit(
+        obj::AbstractObjective, model::AbstractDEModel, population::Population, opt_state::NamedTuple, ps, st;
+        rng::Random.AbstractRNG = Random.default_rng(), epochs = 100, callback = default_callback,
+        parallel = false, batchsize = nothing, nbatch = nothing, kwargs...
+    )
+    _check_keywords(kwargs, (), _PS_GIVEN_HINT)
+    return _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
+end
+
+# Keywords of `setup` that `fit` passes on, per type of objective.
+_setup_keywords(::FixedObjective) = (:init_sigma, :params)
+_setup_keywords(::MixedObjective) = (:init_omega, :init_sigma, :params, :scale)
+_setup_keywords(::AbstractObjective) = ()
+
+const _PS_GIVEN_HINT = "Keywords of `setup` (`T`, `init_sigma`, `params`, ...) are only used when `ps` and `st` are not given."
+
+function _check_keywords(kwargs, allowed, hint)
+    unknown = filter(!in(allowed), keys(kwargs))
+    isempty(unknown) && return nothing
+    allowed_str = isempty(allowed) ? "" : " Accepted here: " * join(string.(allowed), ", ") * "."
+    throw(ArgumentError("`fit` got unsupported keyword argument(s): " * join(string.(unknown), ", ") * ". " * hint * allowed_str))
+end
+
+_setup_for_fit(obj::FixedObjective, rng, model, population, ::Type{T}; init_sigma = nothing, params = MeanSqrt()) where T =
+    setup(obj, rng, model, T; init_sigma, params)
+_setup_for_fit(obj::MixedObjective, rng, model, population, ::Type{T}; kwargs...) where T =
+    setup(obj, rng, model, population, T; kwargs...)
+
+function _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
+    try
+>>>>>>> Stashed changes
         for epoch in 1:epochs
             opt_state, st = update_state(opt_state, st, obj, model, data, ps; kwargs...)
             loss, ∇ = Zygote.withgradient(p -> objective(obj, model, data, p, st), ps)
