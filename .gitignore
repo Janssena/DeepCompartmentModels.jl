@@ -1,3 +1,10 @@
 *.csv
+!data/theophylline.csv
+!data/warfarin.csv
+!data/tobramycin.csv
 Manifest.toml
 .vscode
+.DS_Store
+docs/build/
+docs/src/dev/
+docs/src/generated/
