@@ -13,7 +13,7 @@ a compartment model.
 - `model`: Model to use for the prediction of DE parameters or DE components. The package focusses on the use of neural networks based on Lux.jl.
 - `error`: Error model to use for likelihood calculations.
 - `target`: The index of the partial derivative for the prediction of the dependent variable. Default = 1.
-- `sensealg`: Sensitivity algorithm to use for the calculation of gradients of the parameters with respect to the DESolution.
+- `sensealg`: Sensitivity algorithm to use for the calculation of gradients of the parameters with respect to the DESolution. Defaults to `ForwardDiffSensitivity()`, except for a `UniversalDiffEq` with many parameters (see `_default_sensealg`).
 
 \\
 [janssen2022] Janssen, Alexander, et al. "Deep compartment models: a deep learning approach for the reliable prediction of time‐series data in pharmacokinetic modeling." CPT: Pharmacometrics & Systems Pharmacology 11.7 (2022): 934-945.
@@ -27,10 +27,14 @@ struct DeepCompartmentModel{P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLay
 
     DeepCompartmentModel(
         problem::P, model::M, error::E=ImplicitError(); 
-        target::T = 1, sensealg::S = ForwardDiffSensitivity()
+        target::T = 1, sensealg::S = _default_sensealg(problem, model)
     ) where {P<:SciMLBase.AbstractDEProblem, M, T, E<:AbstractErrorModel, S<:SciMLBase.AbstractSensitivityAlgorithm} = 
         new{P,M,E,T,S}(problem, model, error, target, sensealg)
 end
+
+# Default sensitivity algorithm. Forward-mode sensitivities scale linearly with the number of
+# parameters, which is fine for the small networks that predict ODE parameters.
+_default_sensealg(problem, model) = ForwardDiffSensitivity()
 
 # Constructors. 
 """
