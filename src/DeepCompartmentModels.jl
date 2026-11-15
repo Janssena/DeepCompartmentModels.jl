@@ -68,6 +68,9 @@ export  MSE, SSE, LogLikelihood, VariationalELBO, mse, sse,
 include("lib/setup.jl");
 export  setup, setup_phi
 
+include("lib/batch.jl");
+export  create_batches, take_batch
+
 include("lib/gradients.jl");
 export  gradient, create_batches, take_batch, residual_error_value_and_gradient
 

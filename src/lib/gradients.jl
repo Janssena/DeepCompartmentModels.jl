@@ -131,42 +131,7 @@ function _gradient(obj::VariationalELBO, dcm::DeepCompartmentModel{P,M}, data, b
         Accessors.@reset grad_phi[variance_key][batch] = grad_batch.phi[variance_key]
     end
     
-    return Accessors.@set grad_batch.phi = grad_phi
 end
-
-function create_batches(n::Int, M::Int)
-    batches = [collect(i:M:n) for i in 1:M]
-    idxs = Random.shuffle(1:n)
-    return map(Base.Fix1(getindex, idxs), batches) # randomize indexes in each batch
-end
-
-create_batches(population::Population, M::Int) = 
-    create_batches(length(population), min(M, length(population)))
-
-take_batch(ps::NamedTuple, st::NamedTuple, batch; kwargs...) = take_batch(ps, batch; kwargs...), take_batch(st, batch; kwargs...)
-
-take_batch(x, ::Any; kwargs...) = x
-take_batch(x::AbstractVector{<:AbstractArray{<:Real}}, i; kwargs...) = x[i]
-take_batch(x::AbstractVector{<:AbstractVector{<:AbstractArray{<:Real}}}, i; kwargs...) = x[i]
-take_batch(x::AbstractVector{<:Cholesky}, i; kwargs...) = x[i]
-take_batch(x::AbstractVector{<:AbstractVector{<:Cholesky}}, i; kwargs...) = x[i]
-function take_batch(x::NamedTuple, i; exclude::Union{Nothing, Symbol} = :error)
-    keys_ = keys(x)
-    values_ = map(keys_) do key # Almost a fmap, but does not recurse into indexes
-        if !isnothing(exclude) && key == exclude
-            return x[key]
-        else
-            return take_batch(x[key], i; exclude)
-        end
-    end
-    return NamedTuple{keys_}(values_)
-end
-
-_sum_grads(::Vararg{Nothing}) = nothing
-_sum_grads(xs::Vararg) = +(filter(!isnothing, xs)...)
-_isleaf_or_vec_of_arrays(::KeyPath, x) = _isleaf_or_vec_of_arrays(x)
-_isleaf_or_vec_of_arrays(x) = Functors.isleaf(x)
-_isleaf_or_vec_of_arrays(x::AbstractVector{<:AbstractArray{<:Real}}) = true
 
 function residual_error_value_and_gradient(rng::Random.AbstractRNG, dcm::DeepCompartmentModel{P,M}, data, ps, st; mode::Symbol = :forward, num_samples::Int = 100) where {P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer}
     ∇ = NamedTuple{keys(ps)}(fill(nothing, length(keys(ps))))
