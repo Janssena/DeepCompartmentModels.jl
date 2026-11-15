@@ -5,6 +5,10 @@ k = 5 # number of time variable measurements
 d = 8 # observation dim
 m = 3 # ode dim
 
+# A copy has equal fields, which are independent objects (except for isbits values, such as `nothing`,
+# which have no identity).
+_is_independent_copy(copy, original) = copy == original && (isbits(original) || !(copy === original))
+
 @testset "BasicIndividual" begin 
     # test types and dimensions
     for T in [Float16, Float32, Float64]
@@ -63,7 +67,7 @@ m = 3 # ode dim
     indv_basic_copy = copy(indv_basic)
     @test typeof(indv_basic) == typeof(indv_basic_copy)
     for field in filter(Base.Fix2(!∈, [:id, :callback]), fieldnames(typeof(indv_basic)))
-        @test getfield(indv_basic_copy, field) == getfield(indv_basic, field) && !(getfield(indv_basic_copy, field) === getfield(indv_basic, field))
+        @test _is_independent_copy(getfield(indv_basic_copy, field), getfield(indv_basic, field))
     end
     
     # When changing the callback:
@@ -71,7 +75,7 @@ m = 3 # ode dim
     indv_basic_cb_copy = copy(indv_basic, new_cb)
     @test typeof(indv_basic) !== typeof(indv_basic_cb_copy)
     for field in filter(Base.Fix2(!∈, [:id, :callback]), fieldnames(typeof(indv_basic)))
-        @test getfield(indv_basic_cb_copy, field) == getfield(indv_basic, field) && !(getfield(indv_basic_cb_copy, field) === getfield(indv_basic, field))
+        @test _is_independent_copy(getfield(indv_basic_cb_copy, field), getfield(indv_basic, field))
     end
     @test typeof(indv_basic_cb_copy).parameters[end] == typeof(new_cb)
     @test indv_basic_cb_copy.callback == new_cb
@@ -127,7 +131,7 @@ end
     indv_time_var_copy = copy(indv_time_var1)
     @test typeof(indv_time_var1) == typeof(indv_time_var_copy)
     for field in filter(Base.Fix2(!∈, [:id, :callback]), fieldnames(typeof(indv_time_var1)))
-        @test getfield(indv_time_var_copy, field) == getfield(indv_time_var1, field) && !(getfield(indv_time_var_copy, field) === getfield(indv_time_var1, field))
+        @test _is_independent_copy(getfield(indv_time_var_copy, field), getfield(indv_time_var1, field))
     end
     
     # When changing the callback:
@@ -135,7 +139,7 @@ end
     indv_time_var_cb_copy = copy(indv_time_var1, new_cb)
     @test typeof(indv_time_var1) !== typeof(indv_time_var_cb_copy)
     for field in filter(Base.Fix2(!∈, [:id, :callback]), fieldnames(typeof(indv_time_var1)))
-        @test getfield(indv_time_var_cb_copy, field) == getfield(indv_time_var1, field) && !(getfield(indv_time_var_cb_copy, field) === getfield(indv_time_var1, field))
+        @test _is_independent_copy(getfield(indv_time_var_cb_copy, field), getfield(indv_time_var1, field))
     end
     @test typeof(indv_time_var_cb_copy).parameters[end] == typeof(new_cb)
     @test indv_time_var_cb_copy.callback == new_cb
