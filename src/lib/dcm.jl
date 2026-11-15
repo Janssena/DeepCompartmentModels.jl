@@ -13,7 +13,7 @@ a compartment model.
 - `model`: Model to use for the prediction of DE parameters or DE components. The package focusses on the use of neural networks based on Lux.jl.
 - `error`: Error model to use for likelihood calculations.
 - `target`: The index of the partial derivative for the prediction of the dependent variable. Default = 1.
-- `sensealg`: Sensitivity algorithm to use for the calculation of gradients of the parameters with respect to the DESolution. Defaults to `ForwardDiffSensitivity()`, except for a `UniversalDiffEq` with many parameters (see `_default_sensealg`).
+- `sensealg`: Sensitivity algorithm to use for the calculation of gradients of the parameters with respect to the DESolution. Defaults to `ForwardDiffSensitivity()`. For a `UniversalDiffEq` with at least 256 parameters (`DeepCompartmentModels.UDE_ADJOINT_MIN_PARAMS`) the default is `GaussAdjoint(; autojacvec = ReverseDiffVJP(false))`, which is much faster for large networks (about 5x at ~1,000 and 50x at ~4,000 parameters in a benchmark). Its gradients differ from the forward sensitivities by about 2e-4 (relative, solver tolerance level), and Lux logs a one-time warning about `ReverseDiff.TrackedReal` inputs. Pass `sensealg = ForwardDiffSensitivity()` to use forward sensitivities for any size. `InterpolatingAdjoint(; autojacvec = EnzymeVJP())` is faster still but takes longer to compile.
 
 \\
 [janssen2022] Janssen, Alexander, et al. "Deep compartment models: a deep learning approach for the reliable prediction of time‐series data in pharmacokinetic modeling." CPT: Pharmacometrics & Systems Pharmacology 11.7 (2022): 934-945.

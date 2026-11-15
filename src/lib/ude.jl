@@ -43,7 +43,7 @@ end
 const UDE_ADJOINT_MIN_PARAMS = 256
 
 _default_sensealg(::UniversalDiffEq{P,<:Union{BasicUDE,TimeConcatUDE}}, model::Lux.AbstractLuxLayer) where P = 
-    Lux.parameterlength(model) >= UDE_ADJOINT_MIN_PARAMS ? GaussAdjoint(; autojacvec = ReverseDiffVJP(true)) : ForwardDiffSensitivity()
+    Lux.parameterlength(model) >= UDE_ADJOINT_MIN_PARAMS ? GaussAdjoint(; autojacvec = ReverseDiffVJP(false)) : ForwardDiffSensitivity()
 
 # The state returned by `setup` is `(theta = <Lux state>, ...)`, but `build_problem` needs the Lux
 # state of the model. Accept both so callers can pass either.
@@ -110,6 +110,18 @@ function solve_for_target(
     prob = build_problem(dcm.problem, dcm.model, _layer_state(st))
     sol = solve(prob, individual, ps; sensealg, kwargs...)
     return _take_target(sol, individual, dcm.target)
+end
+
+"""
+    predict(dcm::DeepCompartmentModel{<:UniversalDiffEq}, data, ps, st; target = true, kwargs...)
+
+Solve the UDE and return the predicted observations (`target = true`) or the full solution(s)
+(`target = false`). Unlike the parameter-network based DCM, a UDE has no per-individual
+parameters to predict, so the `individual` keyword of the generic `predict` does not apply.
+`kwargs` (e.g. `saveat`) are forwarded to `solve`.
+"""
+function predict(dcm::DeepCompartmentModel{<:UniversalDiffEq}, data, ps, st; target = true, individual = nothing, kwargs...)
+    return target ? solve_for_target(dcm, data, ps, st; kwargs...) : solve(dcm, data, ps, st; kwargs...)
 end
 
 SciMLBase.solve(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual, ps::NamedTuple; kwargs...) = 
