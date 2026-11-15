@@ -130,8 +130,11 @@ If the DE parameters are ComponentArrays, they already contain an Intervention k
 initialised to zero. This is the case for UniversalDiffEq, since these take ComponentArrays as parameters.
 """
 function construct_p(z::ComponentArray{T}, ::AbstractIndividual) where T
-    @ignore_derivatives z.I = zero(T)
-    return z
+    # The callback mutates `p.I` during the solve. Work on a copy so that the parameters of the
+    # caller (and those of other individuals solved on other threads) are never modified.
+    p = copy(z)
+    @ignore_derivatives p.I = zero(T)
+    return p
 end
 
 """
