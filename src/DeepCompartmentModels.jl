@@ -72,7 +72,10 @@ include("lib/batch.jl");
 export  create_batches, take_batch
 
 include("lib/gradients.jl");
-export  gradient, create_batches, take_batch, residual_error_value_and_gradient
+export  gradient, value_and_gradient, residual_error_value_and_gradient
+
+include("lib/optimization.jl");
+export  fit, update_state
 
 include("lib/vem.jl");
 export  m_step, optimise_omega, optimise_residual_error

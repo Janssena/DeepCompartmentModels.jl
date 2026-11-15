@@ -1,9 +1,19 @@
 import ForwardDiff
 
 """
-    gradient(objective, model, population, ps, st; parallel, batchsize)
+    gradient(objective, model, population, ps, st; parallel, batchsize, nbatch, rng)
 
-Compute the gradient of `objective` with respect to `ps` using Zygote.
+Compute the gradient of `objective` with respect to `ps` using Zygote. Same as
+`last(value_and_gradient(...))`, see [`value_and_gradient`](@ref) for the arguments.
+"""
+gradient(objective::AbstractObjective, dcm::DeepCompartmentModel, population::Population, ps, st; kwargs...) =
+    last(value_and_gradient(objective, dcm, population, ps, st; kwargs...))
+
+"""
+    value_and_gradient(objective, model, population, ps, st; parallel, batchsize, nbatch, rng)
+
+Compute the value of `objective` and its gradient with respect to `ps` using Zygote, in a single
+forward pass. Returns `(loss, ∇)`.
 
 ## Arguments
 - `objective`: Objective function.
@@ -15,54 +25,60 @@ Compute the gradient of `objective` with respect to `ps` using Zygote.
 ## Keyword Arguments
 - `parallel=false`: Parallelism strategy. Options: `false` (sequential), `:individual`
   (one thread per individual), `:batch` (one thread per mini-batch).
-- `batchsize=16`: Batch size when `parallel=:batch`.
+- `batchsize=nothing`, `nbatch=nothing`: Only used when `parallel=:batch`. Set at most one of them:
+  `batchsize` is the maximum number of individuals per batch, `nbatch` is the number of batches. The
+  individuals are divided over the batches as evenly as possible. If neither is set, `batchsize = 16`.
+  See [`create_batches`](@ref).
+- `rng=Random.default_rng()`: Random number generator used to assign individuals to batches when
+  `parallel=:batch`.
 """
-function gradient(objective::AbstractObjective, dcm::DeepCompartmentModel, population::Population, ps, st; parallel = false, batchsize::Int=16)
+function value_and_gradient(
+        objective::AbstractObjective, dcm::DeepCompartmentModel, population::Population, ps, st;
+        parallel = false, batchsize::Union{Nothing,Int} = nothing, nbatch::Union{Nothing,Int} = nothing,
+        rng::Random.AbstractRNG = Random.default_rng()
+    )
     if parallel == false
-        return _gradient(objective, dcm, population, ps, st)
+        return _value_and_gradient(objective, dcm, population, ps, st)
     elseif parallel == true || parallel == :individual
-        grads = qmap(eachindex(population)) do i
-            _gradient(objective, dcm, population, i:i, ps, st)
+        results = qmap(eachindex(population)) do i
+            _value_and_gradient(objective, dcm, population, i:i, ps, st)
         end
-        return fmap(_sum_grads, grads...; exclude = _isleaf_or_vec_of_arrays)
+        return _combine_value_and_gradient(results)
     elseif parallel == :batch
-        batches = create_batches(population, batchsize)
-        grads = qmap(batches) do batch
-            _gradient(objective, dcm, population, batch, ps, st)
+        batches = create_batches(rng, population; batchsize, nbatch)
+        results = qmap(batches) do batch
+            _value_and_gradient(objective, dcm, population, batch, ps, st)
         end
-        return fmap(_sum_grads, grads...; exclude = _isleaf_or_vec_of_arrays)
+        return _combine_value_and_gradient(results)
     else
         throw(ErrorException("Parallel = $(parallel) not recognized. Please use one of [false, :individual, :batch]"))
     end
 end
 
-function _gradient(objective::FixedObjective, dcm::DeepCompartmentModel, data, ps, st)
-    grad = Zygote.gradient(ps) do p
+# `results` are the `(loss, ∇)` of the individuals or batches. The (weighted) losses and gradients of
+# the batches add up to the loss and gradient of the population.
+_combine_value_and_gradient(results) = (sum(first, results), _sum_gradients(last.(results)))
+
+function _value_and_gradient(objective::FixedObjective, dcm::DeepCompartmentModel, data, ps, st)
+    loss, grad = Zygote.withgradient(ps) do p
         objective(dcm, data, p, st)
     end
-    return first(grad)
+    return loss, first(grad)
 end
 
-function _gradient(objective::FixedObjective, dcm::DeepCompartmentModel, population::Population, batch, ps, st)
+function _value_and_gradient(objective::FixedObjective, dcm::DeepCompartmentModel, population::Population, batch, ps, st)
     ps_batch, st_batch = take_batch(ps, st, batch; exclude = dcm.error isa ErrorModelSet ? (:error) : nothing)
     weight = _batch_weight(objective, length(batch), length(population))
-    grad = Zygote.gradient(ps_batch) do p
+    loss, grad = Zygote.withgradient(ps_batch) do p
         loss = objective(dcm, population[batch], p, st_batch)
         loss * oftype(loss, weight) # keep the element type of the loss (Float32)
     end
-    return first(grad)
+    return loss, first(grad)
 end
 
-# The gradients of the batches (or individuals) are summed to obtain the gradient of the full
-# population. That is only correct if the objective is a sum over individuals (SSE, LogLikelihood).
-# MSE is a mean over individuals, so the gradient of a batch has to be weighted by its share of the
-# population. Without this the summed gradient is `length(population) / length(batch)` times too large.
-_batch_weight(::FixedObjective, batch_size::Int, population_size::Int) = true
-_batch_weight(::MSE, batch_size::Int, population_size::Int) = batch_size / population_size
-
-function _gradient(objective::VariationalELBO{MF,PD,N}, dcm, data, ps, st) where {MF,PD<:False,N<:False}
+function _value_and_gradient(objective::VariationalELBO{MF,PD,N}, dcm, data, ps, st) where {MF,PD<:False,N<:False}
     ∇ = NamedTuple{keys(ps)}(fill(nothing, length(keys(ps))))
-    grad = Zygote.gradient(ps.theta, ps.phi, ps.error) do θ, 𝜙, σ
+    loss, grad = Zygote.withgradient(ps.theta, ps.phi, ps.error) do θ, 𝜙, σ
         ps_local = Accessors.@set ps.theta = θ
         ps_local = Accessors.@set ps_local.phi = 𝜙
         ps_local = Accessors.@set ps_local.error = σ
@@ -73,12 +89,12 @@ function _gradient(objective::VariationalELBO{MF,PD,N}, dcm, data, ps, st) where
     Accessors.@reset ∇.phi = grad[2]
     Accessors.@reset ∇.error = grad[3]
         
-    return ∇
+    return loss, ∇
 end
 
-function _gradient(::VariationalELBO{MF,PD,N}, dcm, data, ps, st) where {MF,PD<:True,N<:False}
+function _value_and_gradient(::VariationalELBO{MF,PD,N}, dcm, data, ps, st) where {MF,PD<:True,N<:False}
     ∇ = NamedTuple{keys(ps)}(fill(nothing, length(keys(ps))))
-    grad = Zygote.gradient(ps.theta, ps.phi, ps.error) do θ, 𝜙, σ
+    negative_logjoint, grad = Zygote.withgradient(ps.theta, ps.phi, ps.error) do θ, 𝜙, σ
         ps_local = Accessors.@set ps.theta = θ
         ps_local = Accessors.@set ps_local.phi = 𝜙
         ps_local = Accessors.@set ps_local.error = σ
@@ -91,8 +107,11 @@ function _gradient(::VariationalELBO{MF,PD,N}, dcm, data, ps, st) where {MF,PD<:
 
     # The gradient of m and S given z wrt logq(z)
     ∇_full = add_path_deriv_dlogq(∇, ps, st)
+
+    # The objective is -elbo = -logjoint + logq. logq does not need the ODE solves.
+    loss = negative_logjoint + logq(dcm, ps, st)
     
-    return ∇_full
+    return loss, ∇_full
 end
 
 function add_path_deriv_dlogq(∇, ps, st)
@@ -115,9 +134,9 @@ function add_path_deriv_dlogq(∇, ps, st)
     return ∇
 end
 
-function _gradient(obj::VariationalELBO, dcm::DeepCompartmentModel{P,M}, data, batch::AbstractArray{<:Int}, ps, st) where {P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer}
+function _value_and_gradient(obj::VariationalELBO, dcm::DeepCompartmentModel{P,M}, data, batch::AbstractArray{<:Int}, ps, st) where {P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer}
     ps_batch, st_batch = take_batch(ps, st, batch; exclude = dcm.error isa ErrorModelSet ? (:error) : nothing)
-    grad_batch = _gradient(obj, dcm, data[batch], ps_batch, st_batch)
+    loss, grad_batch = _value_and_gradient(obj, dcm, data[batch], ps_batch, st_batch)
     # TODO: correct phi indices (potentially more to do for other models)
     grad_phi = fmap(ps.phi) do _
         nothing
@@ -131,6 +150,7 @@ function _gradient(obj::VariationalELBO, dcm::DeepCompartmentModel{P,M}, data, b
         Accessors.@reset grad_phi[variance_key][batch] = grad_batch.phi[variance_key]
     end
     
+    return loss, Accessors.@set grad_batch.phi = grad_phi
 end
 
 function residual_error_value_and_gradient(rng::Random.AbstractRNG, dcm::DeepCompartmentModel{P,M}, data, ps, st; mode::Symbol = :forward, num_samples::Int = 100) where {P<:SciMLBase.AbstractDEProblem,M<:Lux.AbstractLuxLayer}
