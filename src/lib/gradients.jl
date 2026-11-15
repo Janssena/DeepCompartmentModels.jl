@@ -45,11 +45,20 @@ end
 
 function _gradient(objective::FixedObjective, dcm::DeepCompartmentModel, population::Population, batch, ps, st)
     ps_batch, st_batch = take_batch(ps, st, batch; exclude = dcm.error isa ErrorModelSet ? (:error) : nothing)
+    weight = _batch_weight(objective, length(batch), length(population))
     grad = Zygote.gradient(ps_batch) do p
-        objective(dcm, population[batch], p, st_batch)
+        loss = objective(dcm, population[batch], p, st_batch)
+        loss * oftype(loss, weight) # keep the element type of the loss (Float32)
     end
     return first(grad)
 end
+
+# The gradients of the batches (or individuals) are summed to obtain the gradient of the full
+# population. That is only correct if the objective is a sum over individuals (SSE, LogLikelihood).
+# MSE is a mean over individuals, so the gradient of a batch has to be weighted by its share of the
+# population. Without this the summed gradient is `length(population) / length(batch)` times too large.
+_batch_weight(::FixedObjective, batch_size::Int, population_size::Int) = true
+_batch_weight(::MSE, batch_size::Int, population_size::Int) = batch_size / population_size
 
 function _gradient(objective::VariationalELBO{MF,PD,N}, dcm, data, ps, st) where {MF,PD<:False,N<:False}
     ∇ = NamedTuple{keys(ps)}(fill(nothing, length(keys(ps))))
