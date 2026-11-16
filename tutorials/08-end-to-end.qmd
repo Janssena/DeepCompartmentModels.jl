@@ -47,8 +47,8 @@ df = DataFrame(CSV.File(joinpath(@__DIR__, "../data/tobramycin.csv")))
 obs = filter(r -> r.EVID == 0, df)
 println("Subjects: $(length(unique(obs.ID)))")
 println("Observations: $(nrow(obs))")
-println("Obs per subject: min=$(minimum(combine(groupby(obs, :ID), nrow).nrow1)), "
-        * "max=$(maximum(combine(groupby(obs, :ID), nrow).nrow1))")
+println("Obs per subject: min=$(minimum(combine(groupby(obs, :ID), nrow).nrow)), "
+        * "max=$(maximum(combine(groupby(obs, :ID), nrow).nrow))")
 println("\nCovariates:")
 for col in [:WT, :AGE, :CLCR]
     vals = combine(groupby(df, :ID), col => first => col)[!, col]
@@ -120,13 +120,13 @@ a well-established predictor of CL; weight (`WT`) drives volumes. We let the
 neural network discover these relationships from data.
 
 ```{julia}
-rng = Random.default_rng()
+rng = Random.Xoshiro(1)
 
 ann = Lux.Chain(
     Normalize([100f0, 90f0, 1f0, 150f0]),   # WT, AGE, SEX, CLCR
     Lux.Dense(4, 32, tanh),
     Lux.Dense(32, 16, tanh),
-    Lux.Dense(16, 4, softplus),              # CL, V₁, Q, V₂
+    Lux.Dense(16, 4, Lux.softplus),              # CL, V₁, Q, V₂
 )
 
 model = DCM(two_comp!, ann, AdditiveError())
@@ -146,7 +146,7 @@ println("phi keys: $(keys(ps.phi))")
 ## 4 — Fitting
 
 ```{julia}
-opt = Adam(1f-3)
+opt = Optimisers.Adam(1f-3)
 losses = Float32[]
 
 opt_state, ps, st = fit(obj, model, population, opt, ps, st;
@@ -171,8 +171,8 @@ fig
 
 All standard GOF plots compare two types of prediction:
 
-- **PRED** — *population* prediction: `predict(model, indv, ps, st; individual=false)`
-- **IPRED** — *individual* prediction: `predict(model, indv, ps, st; individual=true)`
+- **PRED** — *population* prediction: `predict(model, indv, ps_i, st_i; individual=false)`
+- **IPRED** — *individual* prediction: `predict(model, indv, ps_i, st_i; individual=true)`, where `ps_i, st_i = take_batch(ps, st, [i])`
 
 Residuals are **conditional weighted residuals (CWRES)** — scaled by the
 predicted standard deviation from the error model:
@@ -181,16 +181,17 @@ $$\text{CWRES}_{ij} = \frac{y_{ij} - \hat{y}_{ij}}{\sigma(\hat{y}_{ij})}$$
 
 ```{julia}
 # Collect all observed and predicted values
-σ_error = softplus(only(ps.error.σ))   # learned additive σ
+σ_error = Lux.softplus(only(ps.error.σ))   # learned additive σ
 
 DV, PRED, IPRED, TIME_all = Float32[], Float32[], Float32[], Float32[]
 CWRES_pop, CWRES_ind = Float32[], Float32[]
 
-for indv in population
+for (i, indv) in enumerate(population)
+    ps_i, st_i = take_batch(ps, st, [i])   # parameters (incl. random effects) of this individual
     y     = get_y(indv)
     t_obs = get_t(indv)
-    pred  = predict(model, indv, ps, st; individual=false)
-    ipred = predict(model, indv, ps, st; individual=true)
+    pred  = predict(model, indv, ps_i, st_i; individual=false)
+    ipred = predict(model, indv, ps_i, st_i; individual=true)
 
     append!(DV,       y)
     append!(PRED,     pred)
@@ -236,9 +237,8 @@ ax2 = Axis(fig[1,2], xlabel="IPRED (mg/L)",   ylabel="CWRES", title="CWRES vs IP
 
 for (ax, xvals) in [(ax1, TIME_all), (ax2, IPRED)]
     scatter!(ax, xvals, CWRES_ind; color=(:steelblue, 0.5), markersize=5)
-    hlines!(ax, [0f0, -2f0, 2f0];
-            color=[:black, :red, :red],
-            linestyle=[:solid, :dash, :dash])
+    hlines!(ax, [0f0]; color=:black)
+    hlines!(ax, [-2f0, 2f0]; color=:red, linestyle=:dash)
 end
 fig
 ```
@@ -284,8 +284,9 @@ for (i, indv) in enumerate(population[1:9])
               title="ID=$(indv.id)  WT=$(round(get_x(indv)[1], digits=0))  CLCR=$(round(get_x(indv)[4], digits=0))",
               xlabel="Time (h)", ylabel="Conc (mg/L)")
 
-    pred_pop  = predict(model, indv, ps, st; individual=false, saveat=t_dense)
-    pred_indv = predict(model, indv, ps, st; individual=true,  saveat=t_dense)
+    ps_i, st_i = take_batch(ps, st, [i])
+    pred_pop  = predict(model, indv, ps_i, st_i; individual=false, saveat=t_dense)
+    pred_indv = predict(model, indv, ps_i, st_i; individual=true,  saveat=t_dense)
 
     lines!(ax, t_dense, pred_pop;  color=:gray70,    linestyle=:dash, label="PRED")
     lines!(ax, t_dense, pred_indv; color=:steelblue, linewidth=2,     label="IPRED")
@@ -328,9 +329,17 @@ fig
 ### Learned residual error
 
 ```{julia}
-println("Learned σ (additive): $(round(softplus(only(ps.error.σ)), digits=4)) mg/L")
+println("Learned σ (additive): $(round(Lux.softplus(only(ps.error.σ)), digits=4)) mg/L")
 println("Omega (random effects prior variance):")
 println(round.(ps.omega, digits=4))
+```
+
+```{julia}
+#| echo: false
+@assert last(losses) < 0.05 * first(losses) "-ELBO only went from $(first(losses)) to $(last(losses))"
+@assert abs(mean(CWRES_ind)) < 0.6 "mean CWRES $(mean(CWRES_ind)) is biased (usually ≈0.2)"
+@assert std(CWRES_ind) < 2.5 "CWRES sd $(std(CWRES_ind)) is too wide (usually ≈1.65)"
+@assert mean(abs.(CWRES_ind) .< 2) > 0.75 "only $(mean(abs.(CWRES_ind) .< 2)) of the CWRES lies within ±2 (usually ≈0.86)"
 ```
 
 ### Shrinkage

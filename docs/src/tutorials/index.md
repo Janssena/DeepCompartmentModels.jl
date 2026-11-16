@@ -14,6 +14,10 @@ The same notebooks can also be rendered on their own with `quarto render`.
 | [Objectives, error models and parameter structure](../generated/07-objectives.md) | `SSE`, `MSE`, `LogLikelihood`, `VariationalELBO`, error models and the layout of `ps` and `st` |
 | [Writing your own ODE model](../generated/06-custom-ode.md) | the conventions for custom ODE functions, with a transit-compartment model |
 | [Interpretable covariate effects](../generated/04-covariate-effects.md) | branch networks and reading covariate effects |
+| [End-to-end workflow](../generated/08-end-to-end.md) | from raw tobramycin data to a validated mixed-effects DCM: training, goodness of fit, individual predictions |
+| [Counterfactual analysis and Bayesian forecasting](../generated/09-counterfactual.md) | continuous predictions, new dosing schedules, and individualising a prediction from a few samples |
+| [PK/PD modelling](../generated/10-pkpd.md) | several outputs per individual (`MOIndividual`) with one error model per output |
+| [Occasions](../generated/11-occasions.md) | restarting the ODE for repeated treatment periods, and the structure that `solve` and `predict` return |
 
 ## Running them yourself
 
@@ -27,5 +31,4 @@ quarto render tutorials/01-basic-dcm.qmd
 Quarto needs a Jupyter kernel for Julia (`using IJulia; IJulia.installkernel("Julia")`).
 
 !!! note
-    Parts of the interface do not work yet, so several topics, such as universal differential equations,
-    PK/PD with several outputs and occasions, have no tutorial. See [Status and limitations](../limitations.md).
+    Parts of the interface do not work yet, see [Status and limitations](../limitations.md).

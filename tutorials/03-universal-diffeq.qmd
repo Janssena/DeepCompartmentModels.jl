@@ -178,6 +178,13 @@ axislegend(ax; position = :rb)
 fig
 ```
 
+```{julia}
+#| echo: false
+relative_error = sqrt(sum(abs2, learned .- truth) / sum(abs2, truth))
+@assert last(losses) < 1e-2 * first(losses) "SSE only went from $(first(losses)) to $(last(losses))"
+@assert relative_error < 0.35 "the learned elimination deviates $(relative_error) from the truth (usually ≈0.2)"
+```
+
 After 800 epochs the network follows the saturating shape and is close to the truth at
 high amounts, but it is still off at low amounts (below ~30 mg), and the SSE is still
 well above the noise level of the simulation. Training for longer brings the curves closer

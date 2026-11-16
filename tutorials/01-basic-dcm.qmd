@@ -150,6 +150,13 @@ losses[[1, 50, 100, 150]]
 ```
 
 ```{julia}
+#| echo: false
+# Seeded check, so that the docs build fails if the model stops learning
+@assert last(losses) < 0.6 * first(losses) "SSE only went from $(first(losses)) to $(last(losses))"
+@assert last(losses) < 350 "final SSE $(last(losses)) is far above the usual ≈230"
+```
+
+```{julia}
 fig = Figure(size = (500, 300))
 ax = Axis(fig[1, 1]; xlabel = "Epoch", ylabel = "Sum of squared errors", yscale = log10)
 lines!(ax, losses)

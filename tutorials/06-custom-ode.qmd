@@ -123,6 +123,14 @@ end
 DataFrame(model = collect(keys(fits)), SSE = [f.losses[end] for f in values(fits)])
 ```
 
+```{julia}
+#| echo: false
+for (name, f) in fits
+    @assert last(f.losses) < 0.6 * first(f.losses) "$name: SSE only went from $(first(f.losses)) to $(last(f.losses))"
+    @assert last(f.losses) < 400 "$name: final SSE $(last(f.losses)) is far above the usual ≈225"
+end
+```
+
 Both fits use the same data, network and optimiser, so the difference in sum of squared
 errors reflects the structural model. Next the predicted curves for one subject:
 

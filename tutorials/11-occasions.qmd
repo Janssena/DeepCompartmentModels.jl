@@ -36,8 +36,8 @@ training. Key concepts:
 ## Setup
 
 ```{julia}
-using DeepCompartmentModels
-using OrdinaryDiffEq
+using DeepCompartmentModels   # also re-exports Lux, Optimisers, OrdinaryDiffEq, ...
+using Random
 using CairoMakie
 ```
 
@@ -67,7 +67,7 @@ println("occasions field: $(indv_no_occ.occasions)")   # Nothing
 
 # Solve with known PK parameters [CL, Vd]
 z = Float32[3.0, 20.0]
-model_1c = DCM(one_comp!, Lux.Chain(Lux.Dense(1, 2, softplus)))
+model_1c = DCM(one_comp!, Lux.Chain(Normalize([70f0]), Lux.Dense(1, 2, Lux.softplus)))
 
 sol_single = solve(model_1c, indv_no_occ, z)
 typeof(sol_single)
@@ -131,7 +131,7 @@ println("Period 2: $(indv_occ.occasions[2])")
 ## 3 — `solve` returns a Vector of solutions
 
 This is the key structural difference. When `occasions` is set, `solve` returns
-`Vector{DESolution}` — one element per occasion — rather than a single solution.
+`Vector{ODESolution}` — one element per occasion — rather than a single solution.
 
 ```{julia}
 sols = solve(model_1c, indv_occ, z)
@@ -161,20 +161,12 @@ Work with the vector of solutions by indexing or iterating.
 t_dense_p1 = Float32.(0:0.5:72)
 t_dense_p2 = Float32.(168:0.5:240)
 
-# Re-solve at a dense grid within each period
-sol1 = solve(model_1c.problem, indv_occ, z;
-    saveat = t_dense_p1,
-    callback = cb_occ,
-    tstops   = cb_occ.condition.times,
-)
-sol2 = solve(model_1c.problem, indv_occ, z;
-    saveat = t_dense_p2,
-    callback = cb_occ,
-    tstops   = cb_occ.condition.times,
-)
+# Re-solve at a dense grid. `saveat` covers both periods; each occasion only saves
+# the times that fall inside its own window.
+sols_dense = solve(model_1c.problem, indv_occ, z; saveat = vcat(t_dense_p1, t_dense_p2))
 
-conc_p1 = Array(sol1)[1, :] ./ z[2]   # amount → concentration
-conc_p2 = Array(sol2)[1, :] ./ z[2]
+conc_p1 = Array(sols_dense[1])[1, :] ./ z[2]   # amount → concentration
+conc_p2 = Array(sols_dense[2])[1, :] ./ z[2]
 
 fig = Figure(size=(750, 350))
 ax  = Axis(fig[1,1], xlabel="Time (h)", ylabel="Concentration (mg/L)",
@@ -201,8 +193,20 @@ vector per occasion.
 
 ```{julia}
 # predict returns a vector of vectors when occasions are set
-# (because solve_for_target maps _take_target over each DESolution)
-ŷ_occasions = predict(model_1c, indv_occ, (theta=(;), error=(;), omega=Float32[;;], phi=(μ=[zeros(2)], L=[Float32[1f0 0f0;0f0 1f0] |> LowerTriangular])), (theta=(;), phi=(mask=ones(Float32,2,2), epsilon=[zeros(Float32,2)])));
+# (because solve_for_target maps _take_target over each ODESolution)
+ps, st = setup(SSE(), Random.Xoshiro(1), model_1c)
+ŷ_occasions = predict(model_1c, indv_occ, ps, st)
+println("Number of occasions: $(length(ŷ_occasions))")
+println("Predictions per occasion: $(length.(ŷ_occasions))")
+```
+
+```{julia}
+#| echo: false
+@assert length(ŷ_occasions) == length(indv_occ.occasions) == 2 "predict should return one vector per occasion"
+@assert length.(ŷ_occasions) == [length(t_p1), length(t_p2)] "expected one prediction per observation in each occasion, got $(length.(ŷ_occasions))"
+@assert all(all(isfinite, ŷ) for ŷ in ŷ_occasions) "the occasion predictions are not finite"
+@assert length(conc_p1) == length(t_dense_p1) && length(conc_p2) == length(t_dense_p2) "unexpected number of saved time points per occasion"
+@assert conc_p2[1] < 0.1 * maximum(conc_p2) "the second period does not start from an empty body"
 ```
 
 ::: {.callout-note}
@@ -215,7 +219,7 @@ The important point is that `predict` mirrors the `solve` structure: it returns
 ```{julia}
 # More practical: solve directly with known z
 function predict_occasions(model, indv, z; t_per_occ)
-    results = DESolution[]
+    results = []
     for (occ, t_occ) in zip(indv.occasions, t_per_occ)
         _prob = remake(model.problem;
             tspan = (occ.first - 0.1f0, occ.second),
@@ -302,6 +306,7 @@ function make_crossover_individual(id, weight, dose_p1, dose_p2, t_p1, t_p2, y_p
 end
 
 # Simulate some crossover subjects
+rng = Random.Xoshiro(1)
 function sim_crossover(id, weight)
     CL  = Float32(2.5 * (weight/70)^0.75)
     Vd  = Float32(20.0 * (weight/70))
@@ -310,10 +315,10 @@ function sim_crossover(id, weight)
     t_obs = Float32.(1:6:72)
 
     # Period 1: 100 mg
-    conc_p1 = (100f0/Vd) .* exp.(-k .* t_obs) .+ 0.1f0 .* randn(Float32, length(t_obs))
+    conc_p1 = (100f0/Vd) .* exp.(-k .* t_obs) .+ 0.1f0 .* randn(rng, Float32, length(t_obs))
 
     # Period 2: 150 mg
-    conc_p2 = (150f0/Vd) .* exp.(-k .* t_obs) .+ 0.1f0 .* randn(Float32, length(t_obs))
+    conc_p2 = (150f0/Vd) .* exp.(-k .* t_obs) .+ 0.1f0 .* randn(rng, Float32, length(t_obs))
 
     t_p2 = t_obs .+ 168f0   # shifted to Period 2 clock time
 
@@ -336,8 +341,8 @@ println("Periods per subject: $(length(crossover_pop[1].occasions))")
 | Concept | Code |
 |---|---|
 | Add occasions | `Individual(id, x, t, y, cb, T; occasions=[t1=>t2, t3=>t4])` |
-| No occasions | `solve` returns `DESolution` |
-| With occasions | `solve` returns `Vector{DESolution}`, one per period |
+| No occasions | `solve` returns `ODESolution` |
+| With occasions | `solve` returns `Vector{ODESolution}`, one per period |
 | `predict` return | `Vector{T}` (no occasions) or `Vector{Vector{T}}` (with occasions) |
 | ODE restart | Fresh `u0` at each occasion start — no accumulation across wash-out |
 | IOV | Apply different `z` per occasion when calling `solve` directly |
