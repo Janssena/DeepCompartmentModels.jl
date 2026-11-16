@@ -66,5 +66,3 @@ end
 _apply_intervention!(p::AbstractVector, rate) = (p[end] = rate)
 _apply_intervention!(p::AbstractMatrix, rate) = (p[end, :] .= rate)
 _apply_intervention!(p::ComponentArray, rate) = (p.I = rate) # TODO: this should become `A` in time.
-
-@non_differentiable _apply_intervention!(::Any, ::Any)

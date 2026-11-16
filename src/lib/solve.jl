@@ -85,8 +85,6 @@ _with_save_positions(callback::DiscreteCallback, value::Bool) =
 _with_save_positions(callbacks::CallbackSet, value::Bool) = 
     CallbackSet(callbacks.continuous_callbacks, map(Base.Fix2(_with_save_positions, value), callbacks.discrete_callbacks))
 
-@non_differentiable _solve_callback(::Any, ::Any)
-
 _get_u0(prob_u0::AbstractVector{T}, individual_u0::AbstractVector{T}) where T<:Real = 
     !isempty(individual_u0) ? individual_u0 : prob_u0
 
@@ -133,7 +131,7 @@ function construct_p(z::ComponentArray{T}, ::AbstractIndividual) where T
     # The callback mutates `p.I` during the solve. Work on a copy so that the parameters of the
     # caller (and those of other individuals solved on other threads) are never modified.
     p = copy(z)
-    @ignore_derivatives p.I = zero(T)
+    p.I = zero(T)
     return p
 end
 

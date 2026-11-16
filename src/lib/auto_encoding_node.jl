@@ -65,7 +65,7 @@ forward_ode_with_dv(model::NeuralODE{T,P,M,E,S}, population::Population, z₀::A
     forward_ode_with_dv.((model, ), population, eachcol(z₀), (ps, ))
 
 function forward_ode_with_dv(model::NeuralODE{T,P,M,E,S}, individual::AbstractIndividual, z₀::AbstractVector, ps::NamedTuple; sensealg = model.sensealg, kwargs...) where {T,P,M<:Lux.StatefulLuxLayer{<:Any,<:VAENODE},E,S}
-    @ignore_derivatives ps.theta.node.I = zero(eltype(ps.theta.node))
+    ps.theta.node.I = zero(eltype(ps.theta.node))
     prob = _set_u0(model.problem, z₀)
     zₜ = Array(
         forward_ode(prob, individual, ps.theta.node; sensealg, force_dtmin = true, kwargs...)
