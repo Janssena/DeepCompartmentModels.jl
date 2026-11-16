@@ -47,7 +47,11 @@ end
 # InterpolatingAdjoint(; autojacvec = EnzymeVJP()) is another 1.5-2.5x faster and gave correct
 # gradients, but needs up to a minute of compilation and is more fragile (GaussAdjoint with EnzymeVJP
 # fails), so it is not the default.
-
+#
+# These numbers were measured with Zygote (break-even at ~250 parameters). With Enzyme (a quick, noisy
+# measurement with several processes running at once) forward sensitivities were still faster than the
+# adjoint at ~320 parameters (22 vs 38 ms) and 3x slower at ~1,150 (215 vs 66 ms), so the threshold is
+# set to 512, the estimated break-even under Enzyme.
 const UDE_ADJOINT_MIN_PARAMS = 512
 
 # Enzyme (the default automatic differentiation backend) fails on the adjoint methods of in-place problems
@@ -101,7 +105,7 @@ SciMLBase.solve(
         ps::Union{NamedTuple, ComponentArray},
         st::NamedTuple; 
         kwargs...
-    ) = solve.((dcm, ), population, (ps, ), (st, ); kwargs...)
+    ) = [solve(dcm, population[i], ps, st; kwargs...) for i in eachindex(population)]
 
 solve_for_target(
         dcm::DeepCompartmentModel{<:UniversalDiffEq}, 
@@ -109,7 +113,7 @@ solve_for_target(
         ps::Union{NamedTuple, ComponentArray},
         st::NamedTuple; 
         kwargs...
-    ) = solve_for_target.((dcm, ), population, (ps, ), (st, ); kwargs...)
+    ) = [solve_for_target(dcm, population[i], ps, st; kwargs...) for i in eachindex(population)]
 
 function solve_for_target(
         dcm::DeepCompartmentModel{<:UniversalDiffEq}, 

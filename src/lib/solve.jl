@@ -141,37 +141,45 @@ end
 Specific version of the solve call that passes the sensealg to the solve call, only grabs the target 
 indices from prediction inside the `sol` object.
 """
-function solve_for_target(model::DeepCompartmentModel{P,M,E,T}, individual::AbstractIndividual, z::AbstractArray{<:Real}; sensealg = model.sensealg, kwargs...) where {P,M,E,T<:Int}
+function solve_for_target(model::DeepCompartmentModel{P,M,E,T}, individual::AbstractIndividual, z::AbstractArray{<:Real}; sensealg = model.sensealg, kwargs...) where {P,M,E,T<:Union{Int,AbstractVector{Int}}}
     sol = solve(model.problem, individual, z; sensealg, kwargs...)
+    # The outputs of an `MOIndividual` are observed at subsets of its times (`dvid`), which only applies
+    # when the solution is saved at those times. A custom `saveat` returns every output at every time.
+    saveat = get(kwargs, :saveat, nothing)
+    isnothing(saveat) || saveat == get_t(individual) || return _take_target(sol, model.target)
     return _take_target(sol, individual, model.target) # old
 end
 
-_take_target(sol::DESolution, ::AbstractIndividual, target::Int) = _take_target(sol, target)
+_take_target(sol::SciMLBase.AbstractODESolution, ::AbstractIndividual, target::Int) = _take_target(sol, target)
 
-function _take_target(sol::DESolution, individual::MOIndividual, target::AbstractVector{Int}) 
+function _take_target(sol::SciMLBase.AbstractODESolution, individual::MOIndividual, target::AbstractVector{Int}) 
     ŷs = _take_target(sol, target)
     return map(getindex, ŷs, individual.dvid) # TODO: view?
 end
 
-_take_target(sol::DESolution, target::Int) = Array(sol)[target, :]
-function _take_target(sol::DESolution, target::AbstractVector{Int}) 
+_take_target(sol::SciMLBase.AbstractODESolution, target::Int) = Array(sol)[target, :]
+function _take_target(sol::SciMLBase.AbstractODESolution, target::AbstractVector{Int}) 
     preds = Array(sol)
     return map(target) do j
         preds[j, :]
     end
 end
 
-_take_target(sols::AbstractVector{<:DESolution}, target) = 
+_take_target(sols::AbstractVector{<:SciMLBase.AbstractODESolution}, target) = 
     map(Base.Fix2(_take_target, target), sols)
 
+# Individuals with occasions are solved once per occasion
+_take_target(sols::AbstractVector{<:SciMLBase.AbstractODESolution}, individual::AbstractIndividual, target) = 
+    map(sol -> _take_target(sol, individual, target), sols)
+
 solve_for_target(dcm::DeepCompartmentModel{P,M,E,T}, population::Population{<:AbstractIndividual}, z::AbstractMatrix; kwargs...) where {P,M,E,T} = 
-    solve_for_target.((dcm, ), population, eachcol(z); kwargs...)
+    [solve_for_target(dcm, population[i], view(z, :, i); kwargs...) for i in eachindex(population)]
 
 solve_for_target(dcm::DeepCompartmentModel{P,M,E,T}, population::Population{<:TimeVariableIndividual}, z::AbstractVector{<:AbstractMatrix}; kwargs...) where {P,M,E,T} = 
-    solve_for_target.((dcm, ), population, z; kwargs...)
+    [solve_for_target(dcm, population[i], z[i]; kwargs...) for i in eachindex(population)]
 
 SciMLBase.solve(dcm::AbstractDEModel, population::Population{<:AbstractIndividual}, z::AbstractMatrix; kwargs...) = 
-    SciMLBase.solve.((dcm, ), population, eachcol(z); kwargs...)
+    [SciMLBase.solve(dcm, population[i], view(z, :, i); kwargs...) for i in eachindex(population)]
 
 SciMLBase.solve(dcm::AbstractDEModel, population::Population{<:TimeVariableIndividual}, z::AbstractVector{<:AbstractMatrix}; kwargs...) = 
-    SciMLBase.solve.((dcm, ), population, z; kwargs...)
+    [SciMLBase.solve(dcm, population[i], z[i]; kwargs...) for i in eachindex(population)]

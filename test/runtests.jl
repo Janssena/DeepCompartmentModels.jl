@@ -14,6 +14,10 @@ println("Done!")
         include("lib/population.test.jl")
     end
 
+    @testset "Solving" begin
+        include("lib/solve.test.jl")
+    end
+
     @testset "UniversalDiffEq" begin
         include("lib/ude.test.jl")
     end
