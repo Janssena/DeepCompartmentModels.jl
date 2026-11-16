@@ -68,7 +68,7 @@ end
             end
         end
 
-        # the loss of VariationalELBO is -elbo (path_deriv = false currently fails in Zygote: Diagonal pullback)
+        # the loss of VariationalELBO is -elbo
         obj = VariationalELBO([1, 2])
         ps, st = setup(obj, Random.Xoshiro(5), dcm, population)
         loss_vg, ∇ = value_and_gradient(obj, dcm, population, ps, st)
@@ -144,5 +144,57 @@ end
         # nothing to update for fixed effect objectives
         ps_f, st_f = setup(SSE(), Random.Xoshiro(5), dcm)
         @test update_state(Random.Xoshiro(1), st_f, SSE(), dcm, population, ps_f) === st_f
+    end
+
+    @testset "predict for a single individual" begin
+        obj = VariationalELBO([1, 2])
+        ps, st = setup(obj, Random.Xoshiro(5), dcm, population)
+        ŷ_population = predict(dcm, population, ps, st)
+
+        for i in (1, 4)
+            ps_i, st_i = take_batch(ps, st, [i])
+            @test predict(dcm, population[i], ps_i, st_i) ≈ ŷ_population[i]
+            @test predict(dcm, population[i], ps_i, st_i; individual = false) ≈
+                predict(dcm, population[i:i], ps_i, st_i; individual = false)[1]
+        end
+
+        # the random effects of all individuals are given, but only one individual is predicted
+        @test_throws ArgumentError predict(dcm, population[1], ps, st)
+    end
+
+    @testset "multiple outputs" begin
+        cb = generate_dosing_callback(Float32[0 100], Float32)
+        t_pk, t_pd = Float32[1, 2, 4, 8], Float32[2, 8]
+        mo_pop = Population(map(1:3) do i
+            MOIndividual(i, Float32[i / 3], [t_pk, t_pd], [Float32[3, 2, 1, 0.5], Float32[1, 2]], cb, Float32)
+        end)
+        nn_mo = Lux.Chain(Lux.Dense(1, 8, tanh), Lux.Dense(8, 3, Lux.softplus))
+        dcm_mo = DeepCompartmentModel(DeepCompartmentModels.one_comp_abs!, 2, nn_mo, ErrorModelSet(ProportionalError(0.2f0), AdditiveError(1f0)); target = [1, 2])
+
+        @test size(get_x(mo_pop)) == (1, 3)
+
+        obj = SSE()
+        ps, st = setup(obj, Random.Xoshiro(3), dcm_mo; init_sigma = [[0.2f0], [1f0]])
+        ŷ = predict(dcm_mo, mo_pop[1], ps, st)
+        @test length.(ŷ) == [4, 2] # each output at its own observation times
+
+        # a custom `saveat` returns every output at every time
+        t_dense = Float32[0.5, 1, 2, 3, 4, 6, 8]
+        ŷ_dense = predict(dcm_mo, mo_pop[1], ps, st; saveat = t_dense)
+        @test length.(ŷ_dense) == [7, 7]
+        @test ŷ_dense[1][[2, 3, 5, 7]] ≈ ŷ[1]
+    end
+
+    @testset "predict for an individual with occasions" begin
+        occasions = [0f0 => 12f0, 168f0 => 192f0]
+        cb = generate_dosing_callback(Float32[0 100; 168 100], Float32)
+        t_obs = Float32[1, 4, 8, 169, 172, 180]
+        indv = Individual(1, Float32[1], t_obs, zeros(Float32, 6), cb, Float32; occasions)
+        ps, st = setup(SSE(), Random.Xoshiro(3), dcm)
+
+        ŷ = predict(dcm, indv, ps, st)
+        @test length(ŷ) == 2 # one vector of predictions per occasion
+        @test length.(ŷ) == [3, 3]
+        @test all(>(0), ŷ[2]) # the second dose is given in the second occasion
     end
 end

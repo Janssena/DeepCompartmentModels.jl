@@ -26,6 +26,10 @@ println("Done!")
         include("lib/fit.test.jl")
     end
 
+    @testset "Gradients" begin
+        include("lib/gradients.test.jl")
+    end
+
     # The test files below were written for an older version of the package: they call functions that no
     # longer exist (e.g. `make_etas`, `init_omega`, `forward_ode`, `_get_prior`) and error or fail. They are
     # kept for reference, until their cases are ported to the current API, and are skipped by default.

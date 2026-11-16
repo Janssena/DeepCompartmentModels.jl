@@ -1,5 +1,3 @@
-import Zygote
-
 # setup
 z = [0.15, 3., 0.10, 1.0, 0.]
 problem = ODEProblem(two_comp!, zeros(2), (-0.1, 48.))
