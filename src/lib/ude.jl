@@ -47,10 +47,15 @@ end
 # InterpolatingAdjoint(; autojacvec = EnzymeVJP()) is another 1.5-2.5x faster and gave correct
 # gradients, but needs up to a minute of compilation and is more fragile (GaussAdjoint with EnzymeVJP
 # fails), so it is not the default.
-const UDE_ADJOINT_MIN_PARAMS = 256
 
-_default_sensealg(::UniversalDiffEq{P,<:Union{BasicUDE,TimeConcatUDE}}, model::Lux.AbstractLuxLayer) where P = 
-    Lux.parameterlength(model) >= UDE_ADJOINT_MIN_PARAMS ? GaussAdjoint(; autojacvec = ReverseDiffVJP(false)) : ForwardDiffSensitivity()
+const UDE_ADJOINT_MIN_PARAMS = 512
+
+# Enzyme (the default automatic differentiation backend) fails on the adjoint methods of in-place problems
+# (`MethodError: no method matching augmented_primal(...)`), so in-place UDEs always use forward sensitivities.
+function _default_sensealg(ude::UniversalDiffEq{P,<:Union{BasicUDE,TimeConcatUDE}}, model::Lux.AbstractLuxLayer) where P
+    SciMLBase.isinplace(ude.problem) && return ForwardDiffSensitivity()
+    return Lux.parameterlength(model) >= UDE_ADJOINT_MIN_PARAMS ? GaussAdjoint(; autojacvec = ReverseDiffVJP(false)) : ForwardDiffSensitivity()
+end
 
 # The state returned by `setup` is `(theta = <Lux state>, ...)`, but `build_problem` needs the Lux
 # state of the model. Accept both so callers can pass either.
