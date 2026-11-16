@@ -22,8 +22,10 @@ using Reexport
 @reexport using OrdinaryDiffEq
 @reexport using SciMLSensitivity
 
-import Zygote.ChainRules: @non_differentiable, @ignore_derivatives, ignore_derivatives
-import Zygote
+@reexport using ADTypes: AutoEnzyme, AutoForwardDiff, AutoZygote
+
+import ADTypes
+import Enzyme
 import Random
 
 using Functors
