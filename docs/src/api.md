@@ -38,7 +38,7 @@ generate_dosing_callback
 | `get_y(data)` | observations |
 | `get_tx(individual)` | times at which the covariates of a `TimeVariableIndividual` were measured |
 | `load(df, covariates)` | build a population from a `DataFrame` (needs `DataFrames`; currently broken, see [Status and limitations](limitations.md)) |
-| `MOIndividual` | an individual with several observed outputs (not usable in populations yet, see [Status and limitations](limitations.md)) |
+| `MOIndividual` | an individual with several observed outputs, see the [PK/PD tutorial](generated/10-pkpd.md) |
 
 ## Models
 
@@ -139,6 +139,7 @@ update_state
 setup
 gradient
 value_and_gradient
+DeepCompartmentModels.default_ad
 create_batches
 ```
 
@@ -154,6 +155,37 @@ create_batches
 | `Parameterisation`, `MeanSqrt()`, `MeanVar()` | parameterisations of the posterior covariances, the `params` keyword of `setup` |
 | `sample_gaussian(ps, st)` | draw the random effects from the variational posteriors, using the noise stored in `st` |
 | `residual_error_value_and_gradient(rng, model, data, ps, st; mode, num_samples)` | value of the objective for the residual error parameters and its gradient, with the posteriors fixed |
+
+## Automatic differentiation
+
+[`gradient`](@ref), [`value_and_gradient`](@ref) and [`fit`](@ref) take an `ad` keyword with an
+[ADTypes.jl](https://github.com/SciML/ADTypes.jl) backend:
+
+| backend | description |
+|:--|:--|
+| `AutoEnzyme(; mode = set_runtime_activity(Reverse))` | the default. Reverse mode with Enzyme. |
+| `AutoForwardDiff()` | forward mode with ForwardDiff. Fast for models with few parameters. |
+| `AutoZygote()` | reverse mode with Zygote. Opt-in: needs `import Zygote`. Only advised for in-place UDEs with large networks. |
+
+Notes:
+
+- Enzyme cannot yet differentiate through the differential equation solvers in forward mode, so
+  `AutoEnzyme(; mode = Forward)` throws an error. Use `AutoForwardDiff()` for forward mode.
+- The first gradient call of a Julia session compiles the Enzyme code for the objective and sensitivity
+  algorithm that is used. This takes up to a minute (the ODE solver machinery is most of it); later calls are
+  several times faster than with Zygote (which was used before). A model with a different layer type
+  or activation function costs a few extra seconds, a wider network with the same layer types is free. This cannot
+  be moved to package precompilation: Enzyme compiles the differentiated function just in time and a precompiled package image
+  would store a pointer that is invalid in the next session, which segfaults
+  ([Enzyme.jl#681](https://github.com/EnzymeAD/Enzyme.jl/issues/681)). `AutoForwardDiff()` compiles in a few seconds.
+- `AutoZygote()` is only advised for in-place `UniversalDiffEq`s with large networks. Enzyme cannot yet
+  differentiate the adjoint `sensealg`s (`GaussAdjoint`, ...) of in-place problems, whereas Zygote can, so such a
+  model needs `DeepCompartmentModel(UniversalDiffEq(n; inplace = true), network; sensealg = GaussAdjoint(; autojacvec = ReverseDiffVJP(false)))`
+  together with `ad = AutoZygote()`. In general, a large network should be written as an out-of-place UDE (the
+  default) and differentiated with Enzyme, which is faster. Zygote is slower, compiles for a while, and does not support
+  `VariationalELBO(path_deriv = false)` with full-rank posteriors.
+- Gradients with respect to parameters that are not used (such as the infusion rate `I` of a
+  `UniversalDiffEq`) are zero.
 
 ## Lux layers
 

@@ -13,7 +13,7 @@ a compartment model.
 - `model`: Model to use for the prediction of DE parameters or DE components. The package focusses on the use of neural networks based on Lux.jl.
 - `error`: Error model to use for likelihood calculations.
 - `target`: The index of the partial derivative for the prediction of the dependent variable. Default = 1.
-- `sensealg`: Sensitivity algorithm to use for the calculation of gradients of the parameters with respect to the DESolution. Defaults to `ForwardDiffSensitivity()`. For a `UniversalDiffEq` with at least 256 parameters (`DeepCompartmentModels.UDE_ADJOINT_MIN_PARAMS`) the default is `GaussAdjoint(; autojacvec = ReverseDiffVJP(false))`, which is much faster for large networks (about 5x at ~1,000 and 50x at ~4,000 parameters in a benchmark). Its gradients differ from the forward sensitivities by about 2e-4 (relative, solver tolerance level), and Lux logs a one-time warning about `ReverseDiff.TrackedReal` inputs. Pass `sensealg = ForwardDiffSensitivity()` to use forward sensitivities for any size. `InterpolatingAdjoint(; autojacvec = EnzymeVJP())` is faster still but takes longer to compile.
+- `sensealg`: Sensitivity algorithm to use for the calculation of gradients of the parameters with respect to the DESolution. Defaults to `ForwardDiffSensitivity()`. For a `UniversalDiffEq` with at least 512 parameters (`DeepCompartmentModels.UDE_ADJOINT_MIN_PARAMS`) the default is `GaussAdjoint(; autojacvec = ReverseDiffVJP(false))`, which is much faster for large networks (about 5x at ~1,000 and 50x at ~4,000 parameters in a benchmark). Its gradients differ from the forward sensitivities by about 2e-4 (relative, solver tolerance level), and Lux logs a one-time warning about `ReverseDiff.TrackedReal` inputs. Pass `sensealg = ForwardDiffSensitivity()` to use forward sensitivities for any size. `InterpolatingAdjoint(; autojacvec = EnzymeVJP())` is faster still but takes longer to compile.
 
 \\
 [janssen2022] Janssen, Alexander, et al. "Deep compartment models: a deep learning approach for the reliable prediction of time‐series data in pharmacokinetic modeling." CPT: Pharmacometrics & Systems Pharmacology 11.7 (2022): 934-945.
@@ -124,11 +124,24 @@ end
 predict_de_parameters(dcm::DeepCompartmentModel{P,M}, data::D, ps::Union{<:NamedTuple{(:theta,)},<:NamedTuple{(:theta,:error)}}, st) where {P,M,D<:Union{<:AbstractIndividual, Population{<:AbstractIndividual}}} = 
     predict_typ_parameters(dcm, data, ps, st)
 
-function predict_de_parameters(dcm::DeepCompartmentModel{P,M}, data::D, ps::NamedTuple{(:theta,:error,:omega,:phi)}, st) where {P,M,D<:Union{<:AbstractIndividual, Population{<:AbstractIndividual}}}
+function predict_de_parameters(dcm::DeepCompartmentModel{P,M}, data::Population{T}, ps::NamedTuple{(:theta,:error,:omega,:phi)}, st) where {P,M,T<:AbstractIndividual}
     ζ, st_theta = predict_typ_parameters(dcm, data, ps, st)
     η = get_random_effects(ps, st)
     z = ζ .* exp.(η)
     return z, Accessors.@set st.theta = st_theta
+end
+
+# A single individual has one set of random effects, so `ps` (and `st`) must hold the posterior of
+# that individual only, which `take_batch(ps, st, [i])` selects from the parameters of a population.
+function predict_de_parameters(dcm::DeepCompartmentModel{P,M}, data::AbstractIndividual, ps::NamedTuple{(:theta,:error,:omega,:phi)}, st) where {P,M}
+    ζ, st_theta = predict_typ_parameters(dcm, data, ps, st)
+    η = get_random_effects(ps, st)
+    size(η, 2) == 1 || throw(ArgumentError(
+        "`ps` holds the random effects of $(size(η, 2)) individuals, but a single individual is predicted. " *
+        "Select the parameters of that individual with `take_batch(ps, st, [i])` or predict a `Population`."
+    ))
+    z = ζ .* exp.(ζ isa AbstractVector ? vec(η) : η)
+    return z, st_theta
 end
 
 

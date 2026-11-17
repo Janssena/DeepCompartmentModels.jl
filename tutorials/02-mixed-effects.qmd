@@ -173,6 +173,14 @@ rmse(ŷ) = sqrt(mean(reduce(vcat, [(a .- b) .^ 2 for (a, b) in zip(ŷ, get_y(pop
 (typical = rmse(ŷ_typical), individual = rmse(ŷ_individual))
 ```
 
+```{julia}
+#| echo: false
+@assert last(losses_fixed) < 0.5 * first(losses_fixed) "fixed effect SSE did not decrease: $(losses_fixed[[1, end]])"
+@assert last(losses) < 0.9 * first(losses) "-ELBO did not decrease: $(losses[[1, end]])"
+@assert rmse(ŷ_individual) < rmse(ŷ_typical) "individual predictions are not better than typical ones"
+@assert rmse(ŷ_individual) < 1.6 "individual RMSE $(rmse(ŷ_individual)) is far above the usual ≈1.25"
+```
+
 The individual predictions have a clearly lower error, as they should: they use information from
 the individual's own observations. Plotting a few subjects on a fine time grid needs the
 parameters of just that subject. `take_batch` slices `ps` and `st` for a set of

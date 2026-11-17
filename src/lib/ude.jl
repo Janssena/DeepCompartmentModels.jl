@@ -47,10 +47,19 @@ end
 # InterpolatingAdjoint(; autojacvec = EnzymeVJP()) is another 1.5-2.5x faster and gave correct
 # gradients, but needs up to a minute of compilation and is more fragile (GaussAdjoint with EnzymeVJP
 # fails), so it is not the default.
-const UDE_ADJOINT_MIN_PARAMS = 256
+#
+# These numbers were measured with Zygote (break-even at ~250 parameters). With Enzyme (a quick, noisy
+# measurement with several processes running at once) forward sensitivities were still faster than the
+# adjoint at ~320 parameters (22 vs 38 ms) and 3x slower at ~1,150 (215 vs 66 ms), so the threshold is
+# set to 512, the estimated break-even under Enzyme.
+const UDE_ADJOINT_MIN_PARAMS = 512
 
-_default_sensealg(::UniversalDiffEq{P,<:Union{BasicUDE,TimeConcatUDE}}, model::Lux.AbstractLuxLayer) where P = 
-    Lux.parameterlength(model) >= UDE_ADJOINT_MIN_PARAMS ? GaussAdjoint(; autojacvec = ReverseDiffVJP(false)) : ForwardDiffSensitivity()
+# Enzyme (the default automatic differentiation backend) fails on the adjoint methods of in-place problems
+# (`MethodError: no method matching augmented_primal(...)`), so in-place UDEs always use forward sensitivities.
+function _default_sensealg(ude::UniversalDiffEq{P,<:Union{BasicUDE,TimeConcatUDE}}, model::Lux.AbstractLuxLayer) where P
+    SciMLBase.isinplace(ude.problem) && return ForwardDiffSensitivity()
+    return Lux.parameterlength(model) >= UDE_ADJOINT_MIN_PARAMS ? GaussAdjoint(; autojacvec = ReverseDiffVJP(false)) : ForwardDiffSensitivity()
+end
 
 # The state returned by `setup` is `(theta = <Lux state>, ...)`, but `build_problem` needs the Lux
 # state of the model. Accept both so callers can pass either.
@@ -96,7 +105,7 @@ SciMLBase.solve(
         ps::Union{NamedTuple, ComponentArray},
         st::NamedTuple; 
         kwargs...
-    ) = solve.((dcm, ), population, (ps, ), (st, ); kwargs...)
+    ) = [solve(dcm, population[i], ps, st; kwargs...) for i in eachindex(population)]
 
 solve_for_target(
         dcm::DeepCompartmentModel{<:UniversalDiffEq}, 
@@ -104,7 +113,7 @@ solve_for_target(
         ps::Union{NamedTuple, ComponentArray},
         st::NamedTuple; 
         kwargs...
-    ) = solve_for_target.((dcm, ), population, (ps, ), (st, ); kwargs...)
+    ) = [solve_for_target(dcm, population[i], ps, st; kwargs...) for i in eachindex(population)]
 
 function solve_for_target(
         dcm::DeepCompartmentModel{<:UniversalDiffEq}, 

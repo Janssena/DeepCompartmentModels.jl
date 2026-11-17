@@ -19,6 +19,10 @@ Development on the `feat/new-ude` branch, after 1.2.3.
   equations, covariate effects, loading data, custom ODEs, objectives, end-to-end workflows,
   counterfactual predictions, PKPD models and occasions. Includes a GitHub Actions workflow to build
   and deploy the docs, README badges, and example datasets (theophylline, tobramycin, warfarin).
+- Seeded checks in the tutorials (hidden cells that assert that the loss decreases, the predictions are
+  sensible and so on), so the documentation build fails when a tutorial stops learning. A scheduled
+  workflow (`.github/workflows/timings.yml`, `docs/timings.jl`) records the run time of every tutorial,
+  and the gradient tests compare the speed of Enzyme and ForwardDiff relative to each other.
 - `value_and_gradient`, which returns the loss together with its gradient. `gradient` now calls it,
   so the two always agree.
 - `rng`, `batchsize` and `nbatch` keyword arguments for `fit`, `gradient` and `value_and_gradient`,
@@ -27,12 +31,23 @@ Development on the `feat/new-ude` branch, after 1.2.3.
   types. Both `BasicUDE` and `TimeConcatUDE` support in-place problems.
 - The default sensitivity algorithm of a `DeepCompartmentModel` is picked by the new
   `_default_sensealg(problem, model)`. Users can add methods for their own problem types. For a
-  `UniversalDiffEq` with many parameters (at least `UDE_ADJOINT_MIN_PARAMS = 256`) it uses an adjoint
+  `UniversalDiffEq` with many parameters (at least `UDE_ADJOINT_MIN_PARAMS = 512`) it uses an adjoint
   method instead of `ForwardDiffSensitivity()`.
 - `_solve_callback` hook, so the interpolation behaviour of callbacks during a solve can be customised.
+- An `ad` keyword for `gradient`, `value_and_gradient` and `fit` that selects the automatic differentiation
+  backend as an [ADTypes.jl](https://github.com/SciML/ADTypes.jl) object: `AutoEnzyme()` (reverse mode, the
+  default), `AutoForwardDiff()` or, after `import Zygote`, `AutoZygote()`. `AutoEnzyme`, `AutoForwardDiff`, `AutoZygote` and
+  `DeepCompartmentModels.default_ad()` are provided. Enzyme in forward mode is not supported yet (Enzyme cannot differentiate through the solvers). Zygote is an optional dependency (package extension `DCMZygoteExt`);
+  it is only advised for in-place UDEs with large networks, for which Enzyme cannot yet use the adjoint methods.
 
 ### Changed
 
+- ODE problems are solved with `SciMLBase.FullSpecialize`: `solve` switches the ODE function of the
+  problem (also of user-supplied problems, which are not modified) to it when remaking the problem.
+  With the default `AutoSpecialize`, DiffEqBase 7 erases the type of the dosing callback on Julia 1.12
+  and later, which made the return type of `solve` and `solve_for_target` impossible to infer
+  (`Any`) and a small solve about 2.5 times slower. Individuals with occasions now remake the problem
+  once instead of twice.
 - Batching code (`create_batches`, `take_batch`, combining batch gradients) moved from
   `gradients.jl` and `optimization.jl` to a new `src/lib/batch.jl`. `create_batches` and `take_batch`
   are still exported.
@@ -40,9 +55,25 @@ Development on the `feat/new-ude` branch, after 1.2.3.
   `_setup_for_fit` and uses the new optimisation helpers. `fit` is now exported alongside
   `update_state`.
 - The in-place `UniversalDiffEq` check was removed, since in-place UDEs are supported (see above).
+- **Gradients are now computed with Enzyme (reverse mode) instead of Zygote**, which is several times faster
+  (about 4-5x for the standard models in a micro benchmark). Zygote is no longer a dependency, and the
+  `@non_differentiable`/`@ignore_derivatives` annotations were removed. The first gradient call takes longer,
+  because Enzyme compiles the code for the objective.
+- **Requires OrdinaryDiffEq 7 and SciMLBase 3** (compat was `6.108` and `2.152`). Enzyme 0.13.219 (EnzymeCore 0.8.27)
+  does not work with the Enzyme extension of DiffEqBase 6, which OrdinaryDiffEq 6 depends on, whereas DiffEqBase 7 does.
+  SciMLBase 3 no longer provides `DESolution`; the package now uses `SciMLBase.AbstractODESolution`.
+- Gradients of parameters that are not used are now zero instead of `nothing` (e.g. the infusion rate `I` of a
+  `UniversalDiffEq`, for which Zygote returned a meaningless nonzero value).
+- In-place `UniversalDiffEq` problems now always default to `ForwardDiffSensitivity()`: Enzyme cannot differentiate
+  the adjoint sensitivity algorithms of in-place problems yet.
+- `solve`, `solve_for_target` on a `Population` use explicit loops instead of broadcasting over the population.
 
 ### Fixed
 
+- `VariationalELBO(idxs; path_deriv = false)` no longer fails with `_Diagonal_pullback(::NoTangent)` (a Zygote
+  error).
+- `residual_error_value_and_gradient(...; mode = :reverse)` no longer fails with a `MethodError` on a conversion
+  from `Float64` to `Vector{Float32}`.
 - Dispatch errors in `dcm.jl`, `objectives.jl` and `ude.jl` (`1dff8ed`).
 - The gradient of `MSE` is now weighted by the batch's share of the population. Before, summing the
   batch gradients made it `length(population) / length(batch)` times too large when using

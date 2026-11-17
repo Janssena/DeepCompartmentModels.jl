@@ -25,9 +25,6 @@ get_x(indv::AbstractIndividual, key::Symbol=:zeta) = indv.x[key]
 get_t(indv::AbstractIndividual) = indv.t
 get_y(indv::AbstractIndividual) = indv.y
 
-@non_differentiable get_x(::AbstractIndividual, ::Symbol)
-@non_differentiable get_y(::AbstractIndividual)
-
 
 ################################################################################
 ##########                        Individuals                         ##########

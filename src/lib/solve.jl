@@ -48,8 +48,7 @@ function SciMLBase.solve(
     sols = map(individual.occasions) do occ
         saveat_occ = filter(Base.Fix2(_within_occ, occ), saveat)
         tstops_occ = filter(Base.Fix2(_within_occ, occ), tstops)
-        _problem = remake(problem, tspan = (occ.first - T(0.1), problem.tspan[2]))
-        prob = _remake_prob(_problem, individual, saveat_occ, z)
+        prob = _remake_prob(problem, individual, saveat_occ, z; t0 = occ.first - T(0.1))
         return SciMLBase.solve(prob, solver;
             saveat = interpolate ? empty(saveat_occ) : saveat_occ, callback, 
             tstops = tstops_occ, kwargs...
@@ -61,17 +60,41 @@ end
 _within_occ(t::Real, occ::Pair) = t >= occ.first && t <= occ.second
 
 """
-    _remake_prob(problem, individual, saveat, z)
+    _remake_prob(problem, individual, saveat, z; t0 = problem.tspan[1])
 
-Internal function that remakes the DEProblem to have the same type as the Individual, takes the u0 from the 
-individual if not empty, sets the full DE parameters using `construct_p(z, individual)`, and makes sure 
-that the tspan is in support of the maximum of `saveat`.
+Internal function that remakes the DEProblem to have the same type as the Individual, takes the u0 from the
+individual if not empty, sets the full DE parameters using `construct_p(z, individual)`, and makes sure
+that the tspan starts at `t0` and is in support of the maximum of `saveat`.
+
+ODE problems are also switched to `SciMLBase.FullSpecialize` (see `_full_specialize`),
+whatever specialization the user (or a convenience constructor) created them with.
 """
-function _remake_prob(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual{T}, saveat, z::AbstractArray) where T
+function _remake_prob(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual{T}, saveat, z::AbstractArray; t0 = prob.tspan[1]) where T
     p = construct_p(z, individual)
     u0 = _get_u0(T.(prob.u0), individual.u0)
-    return remake(prob, u0 = T.(u0), tspan = (T(prob.tspan[1]), T(maximum(saveat))), p = p)
+    return remake(prob; _specialization(prob)..., u0 = T.(u0), tspan = (T(t0), T(maximum(saveat))), p = p)
 end
+
+# With `AutoSpecialize` (the default of `ODEProblem`), DiffEqBase >= 7 erases the type of the callbacks into a
+# `CallbackSet{Vector{Any},Vector{Any}}` on Julia >= 1.12. This makes the return type of `solve` impossible
+# to infer (it is `Any` whenever a callback is present, as is the case for every dosing callback) and the callbacks
+# are dispatched dynamically inside the integrator (~2.5x slower for a small one-compartment solve).
+# `FullSpecialize` is not erased. Since the problem is remade for every solve anyway, we set it here, so that
+# it also applies to the problems passed in by users. Changing the specialization of the ODEFunction does not
+# affect the problem that was passed in.
+_specialization(prob::SciMLBase.AbstractODEProblem) = (; f = _full_specialize(prob.f))
+_specialization(::SciMLBase.AbstractDEProblem) = (;) # Only ODEFunctions are converted
+
+"""
+    _full_specialize(f)
+
+Returns the ODEFunction `f` with `SciMLBase.FullSpecialize`. All other fields of the function (mass matrix,
+jacobian, etc.) are kept. Functions that are already `FullSpecialize` (and other types of functions) are
+returned as is.
+"""
+_full_specialize(f::SciMLBase.ODEFunction{iip,SciMLBase.FullSpecialize}) where iip = f
+_full_specialize(f::SciMLBase.ODEFunction{iip}) where iip = SciMLBase.ODEFunction{iip,SciMLBase.FullSpecialize}(f)
+_full_specialize(f) = f
 
 # When interpolating, the solution has to be saved at the callback events. We return a modified
 # copy instead of changing `save_positions` on the callback of the individual, since that object
@@ -84,8 +107,6 @@ _with_save_positions(callback::DiscreteCallback, value::Bool) =
 
 _with_save_positions(callbacks::CallbackSet, value::Bool) = 
     CallbackSet(callbacks.continuous_callbacks, map(Base.Fix2(_with_save_positions, value), callbacks.discrete_callbacks))
-
-@non_differentiable _solve_callback(::Any, ::Any)
 
 _get_u0(prob_u0::AbstractVector{T}, individual_u0::AbstractVector{T}) where T<:Real = 
     !isempty(individual_u0) ? individual_u0 : prob_u0
@@ -133,7 +154,7 @@ function construct_p(z::ComponentArray{T}, ::AbstractIndividual) where T
     # The callback mutates `p.I` during the solve. Work on a copy so that the parameters of the
     # caller (and those of other individuals solved on other threads) are never modified.
     p = copy(z)
-    @ignore_derivatives p.I = zero(T)
+    p.I = zero(T)
     return p
 end
 
@@ -143,37 +164,45 @@ end
 Specific version of the solve call that passes the sensealg to the solve call, only grabs the target 
 indices from prediction inside the `sol` object.
 """
-function solve_for_target(model::DeepCompartmentModel{P,M,E,T}, individual::AbstractIndividual, z::AbstractArray{<:Real}; sensealg = model.sensealg, kwargs...) where {P,M,E,T<:Int}
+function solve_for_target(model::DeepCompartmentModel{P,M,E,T}, individual::AbstractIndividual, z::AbstractArray{<:Real}; sensealg = model.sensealg, kwargs...) where {P,M,E,T<:Union{Int,AbstractVector{Int}}}
     sol = solve(model.problem, individual, z; sensealg, kwargs...)
+    # The outputs of an `MOIndividual` are observed at subsets of its times (`dvid`), which only applies
+    # when the solution is saved at those times. A custom `saveat` returns every output at every time.
+    saveat = get(kwargs, :saveat, nothing)
+    isnothing(saveat) || saveat == get_t(individual) || return _take_target(sol, model.target)
     return _take_target(sol, individual, model.target) # old
 end
 
-_take_target(sol::DESolution, ::AbstractIndividual, target::Int) = _take_target(sol, target)
+_take_target(sol::SciMLBase.AbstractODESolution, ::AbstractIndividual, target::Int) = _take_target(sol, target)
 
-function _take_target(sol::DESolution, individual::MOIndividual, target::AbstractVector{Int}) 
+function _take_target(sol::SciMLBase.AbstractODESolution, individual::MOIndividual, target::AbstractVector{Int}) 
     ŷs = _take_target(sol, target)
     return map(getindex, ŷs, individual.dvid) # TODO: view?
 end
 
-_take_target(sol::DESolution, target::Int) = Array(sol)[target, :]
-function _take_target(sol::DESolution, target::AbstractVector{Int}) 
+_take_target(sol::SciMLBase.AbstractODESolution, target::Int) = Array(sol)[target, :]
+function _take_target(sol::SciMLBase.AbstractODESolution, target::AbstractVector{Int}) 
     preds = Array(sol)
     return map(target) do j
         preds[j, :]
     end
 end
 
-_take_target(sols::AbstractVector{<:DESolution}, target) = 
+_take_target(sols::AbstractVector{<:SciMLBase.AbstractODESolution}, target) = 
     map(Base.Fix2(_take_target, target), sols)
 
+# Individuals with occasions are solved once per occasion
+_take_target(sols::AbstractVector{<:SciMLBase.AbstractODESolution}, individual::AbstractIndividual, target) = 
+    map(sol -> _take_target(sol, individual, target), sols)
+
 solve_for_target(dcm::DeepCompartmentModel{P,M,E,T}, population::Population{<:AbstractIndividual}, z::AbstractMatrix; kwargs...) where {P,M,E,T} = 
-    solve_for_target.((dcm, ), population, eachcol(z); kwargs...)
+    [solve_for_target(dcm, population[i], view(z, :, i); kwargs...) for i in eachindex(population)]
 
 solve_for_target(dcm::DeepCompartmentModel{P,M,E,T}, population::Population{<:TimeVariableIndividual}, z::AbstractVector{<:AbstractMatrix}; kwargs...) where {P,M,E,T} = 
-    solve_for_target.((dcm, ), population, z; kwargs...)
+    [solve_for_target(dcm, population[i], z[i]; kwargs...) for i in eachindex(population)]
 
 SciMLBase.solve(dcm::AbstractDEModel, population::Population{<:AbstractIndividual}, z::AbstractMatrix; kwargs...) = 
-    SciMLBase.solve.((dcm, ), population, eachcol(z); kwargs...)
+    [SciMLBase.solve(dcm, population[i], view(z, :, i); kwargs...) for i in eachindex(population)]
 
 SciMLBase.solve(dcm::AbstractDEModel, population::Population{<:TimeVariableIndividual}, z::AbstractVector{<:AbstractMatrix}; kwargs...) = 
-    SciMLBase.solve.((dcm, ), population, z; kwargs...)
+    [SciMLBase.solve(dcm, population[i], z[i]; kwargs...) for i in eachindex(population)]

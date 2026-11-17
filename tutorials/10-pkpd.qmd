@@ -33,13 +33,12 @@ realistically across subjects.
 ## Setup
 
 ```{julia}
-using DeepCompartmentModels
-using OrdinaryDiffEq
+using DeepCompartmentModels   # also re-exports Lux, Optimisers, OrdinaryDiffEq, ...
 using Random
 using Statistics: mean, std
 using CairoMakie
 
-rng = Random.default_rng()
+rng = Random.Xoshiro(1)
 ```
 
 ---
@@ -164,7 +163,7 @@ end
 ann_pkpd = Lux.Chain(
     Normalize([120f0]),
     Lux.Dense(1, 16, tanh),
-    Lux.Dense(16, 5, softplus),
+    Lux.Dense(16, 5, Lux.softplus),
 )
 
 # ErrorModelSet: separate error models for PK (proportional) and PD (additive)
@@ -202,7 +201,7 @@ println("ps.error.σ: $(ps_pkpd.error.σ)")
 ```
 
 ```{julia}
-opt = Adam(1f-3)
+opt = Optimisers.Adam(1f-3)
 losses_pkpd = Float32[]
 
 _, ps_pkpd, st_pkpd = fit(obj_pkpd, model_pkpd, mo_pop, opt, ps_pkpd, st_pkpd;
@@ -223,10 +222,18 @@ vector per response.
 
 ```{julia}
 # ŷ is a 2-element vector: [PK concentrations, PD effect-site amounts]
-ŷ_demo = predict(model_pkpd, mo_pop[1], ps_pkpd, st_pkpd)
+# `take_batch` selects the parameters (incl. random effects) of one individual
+ps_1, st_1 = take_batch(ps_pkpd, st_pkpd, [1])
+ŷ_demo = predict(model_pkpd, mo_pop[1], ps_1, st_1)
 println("predict returns $(length(ŷ_demo)) responses")
 println("  PK ($(length(ŷ_demo[1])) values): $(round.(ŷ_demo[1][1:4], digits=3))...")
 println("  PD ($(length(ŷ_demo[2])) values): $(round.(ŷ_demo[2][1:4], digits=3))...")
+```
+
+```{julia}
+#| echo: false
+@assert last(losses_pkpd) < 0.05 * first(losses_pkpd) "-ELBO only went from $(first(losses_pkpd)) to $(last(losses_pkpd))"
+@assert length(ŷ_demo) == 2 && all(!isempty, ŷ_demo) "predict should return one vector per response"
 ```
 
 ```{julia}
@@ -234,7 +241,8 @@ println("  PD ($(length(ŷ_demo[2])) values): $(round.(ŷ_demo[2][1:4], digits=3
 DV_pk, PRED_pk, DV_pd, PRED_pd = Float32[], Float32[], Float32[], Float32[]
 
 for (i, indv) in enumerate(mo_pop)
-    ŷ = predict(model_pkpd, indv, ps_pkpd, st_pkpd)
+    ps_i, st_i = take_batch(ps_pkpd, st_pkpd, [i])
+    ŷ = predict(model_pkpd, indv, ps_i, st_i)
     # ŷ[1] = plasma amounts; concentration = amount / V₁
     V₁_pred = predict_typ_parameters(model_pkpd, indv, ps_pkpd, st_pkpd)[1][2]  # index 2 = V₁
     pk_conc  = ŷ[1] ./ V₁_pred
@@ -270,7 +278,8 @@ for (i, indv) in enumerate(mo_pop[1:4])
     ax_pk = Axis(fig[2i-1, 1], ylabel="Conc (mg/L)", title="Subject $(indv.id) — PK")
     ax_pd = Axis(fig[2i-1, 2], ylabel="Effect (%)",  title="Subject $(indv.id) — PD")
 
-    ŷ = predict(model_pkpd, indv, ps_pkpd, st_pkpd; saveat=t_dense)
+    ps_i, st_i = take_batch(ps_pkpd, st_pkpd, [i])
+    ŷ = predict(model_pkpd, indv, ps_i, st_i; saveat=t_dense)
     V₁_pred = predict_typ_parameters(model_pkpd, indv, ps_pkpd, st_pkpd)[1][2]
 
     lines!(ax_pk, t_dense, ŷ[1] ./ V₁_pred; color=:steelblue, linewidth=2)
@@ -285,8 +294,8 @@ fig
 ### Residuals
 
 ```{julia}
-σ_pk = softplus(only(ps_pkpd.error.σ[1]))   # proportional σ
-σ_pd = softplus(only(ps_pkpd.error.σ[2]))   # additive σ
+σ_pk = Lux.softplus(only(ps_pkpd.error.σ[1]))   # proportional σ
+σ_pd = Lux.softplus(only(ps_pkpd.error.σ[2]))   # additive σ
 
 cwres_pk = (DV_pk .- PRED_pk) ./ (PRED_pk .* σ_pk .+ 1f-6)
 cwres_pd = (DV_pd .- PRED_pd) ./ σ_pd
@@ -297,8 +306,8 @@ ax2 = Axis(fig[1,2], xlabel="PRED", ylabel="CWRES", title="PD residuals")
 
 for (ax, pred, cwres) in [(ax1, PRED_pk, cwres_pk), (ax2, PRED_pd, cwres_pd)]
     scatter!(ax, pred, cwres; color=(:steelblue, 0.5), markersize=5)
-    hlines!(ax, [0f0, -2f0, 2f0]; color=[:black, :red, :red],
-            linestyle=[:solid, :dash, :dash])
+    hlines!(ax, [0f0]; color=:black)
+    hlines!(ax, [-2f0, 2f0]; color=:red, linestyle=:dash)
 end
 fig
 ```
@@ -313,4 +322,4 @@ fig
 | Per-response error models | `ErrorModelSet(ProportionalError(), AdditiveError())` |
 | Observed compartments | `DCM(...; target=[1, 3])` |
 | Predictions per response | `predict(...)` returns `Vector{Vector}` |
-| Residual scaling | Use `softplus(ps.error.σ[j])` for response `j` |
+| Residual scaling | Use `Lux.softplus(ps.error.σ[j])` for response `j` |

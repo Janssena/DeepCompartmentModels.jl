@@ -58,7 +58,7 @@ Base.getindex(pop::Population, idx::Int) = getindex(pop.data, idx) # No default
 Base.setindex!(pop::Population{T}, v::T, idx::Int) where {T} = (pop.data[idx] = v)
 Base.showarg(io::IO, ::Population{T}, toplevel) where T = print(io, "Population{$(nameof(T)){$(T.parameters[1])}}")
 
-function get_x(pop::Population{T}, key::Symbol=:zeta) where T<:BasicIndividual
+function get_x(pop::Population{T}, key::Symbol=:zeta) where T<:Union{BasicIndividual,MOIndividual}
     x = zeros(first(T.parameters), length(get_x(pop[1], key)), pop.count)
     for i in eachindex(pop)
         x[:, i] .= get_x(pop[i], key)
@@ -69,8 +69,5 @@ end
 get_x(pop::Population{T}, key::Symbol=:zeta) where T<:TimeVariableIndividual = [get_x(indv, key) for indv in pop]
 get_t(pop::Population) = [get_t(indv) for indv in pop]
 get_y(pop::Population) = [get_y(indv) for indv in pop]
-
-@non_differentiable get_x(::Population, ::Symbol)
-@non_differentiable get_y(::Population)
 
 load() = nothing # Is implemented by extensions

@@ -97,6 +97,11 @@ ps, losses = train(SSE(), model, population, ps, st; epochs = 300, lr = 0.01f0)
 losses[[1, 100, 200, 300]]
 ```
 
+```{julia}
+#| echo: false
+@assert last(losses) < 0.4 * first(losses) "SSE only went from $(first(losses)) to $(last(losses))"
+```
+
 ## Reading the covariate effects
 
 Each branch is an ordinary Lux layer inside the chain, so its effect can be evaluated on a grid of

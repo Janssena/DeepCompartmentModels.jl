@@ -63,20 +63,24 @@ end
 
 df   = DataFrame(CSV.File(joinpath(@__DIR__, "../data/tobramycin.csv")))
 population = load_tobramycin(df)
-rng  = Random.default_rng()
+rng  = Random.Xoshiro(1)
 
 ann = Lux.Chain(
     Normalize([100f0, 90f0, 1f0, 150f0]),
     Lux.Dense(4, 32, tanh),
     Lux.Dense(32, 16, tanh),
-    Lux.Dense(16, 4, softplus),
+    Lux.Dense(16, 4, Lux.softplus),
 )
 model = DCM(two_comp!, ann, AdditiveError())
 obj   = VariationalELBO([1, 2]; path_deriv=true)
 
 ps, st = setup(obj, rng, model, population; init_omega=0.1f0, init_sigma=[0.5f0])
-_, ps, st = fit(obj, model, population, Adam(1f-3), ps, st; epochs=1000,
-    callback = (e, l) -> e % 500 == 0 && println("Epoch $e  -ELBO=$(round(l,digits=2))"))
+losses = Float32[]
+_, ps, st = fit(obj, model, population, Optimisers.Adam(1f-3), ps, st; epochs=1000,
+    callback = (e, l) -> begin
+        push!(losses, l)
+        e % 500 == 0 && println("Epoch $e  -ELBO=$(round(l,digits=2))")
+    end)
 ```
 
 ---
@@ -90,12 +94,15 @@ smooth curve at any desired resolution.
 ```{julia}
 indv = population[1]
 
+# `ps` holds the random effects of all individuals, `take_batch` selects those of one
+ps_indv, st_indv = take_batch(ps, st, [1])
+
 # Sparse: only at observed time points
-ŷ_sparse = predict(model, indv, ps, st; saveat=get_t(indv))
+ŷ_sparse = predict(model, indv, ps_indv, st_indv; saveat=get_t(indv))
 
 # Dense: every 30 minutes
 t_dense = Float32.(0:0.5:maximum(get_t(indv)) + 24)
-ŷ_dense = predict(model, indv, ps, st; saveat=t_dense)
+ŷ_dense = predict(model, indv, ps_indv, st_indv; saveat=t_dense)
 
 fig = Figure(size=(650, 350))
 ax  = Axis(fig[1,1], xlabel="Time (h)", ylabel="Concentration (mg/L)",
@@ -147,11 +154,12 @@ clinical context. We compare:
 ```{julia}
 # Pick a representative subject
 subj = population[3]
+ps_subj, st_subj = take_batch(ps, st, [3])   # parameters of this subject
 x_subj = get_x(subj)   # [WT, AGE, SEX, CLCR]
 t_plot  = Float32.(0:0.5:168)   # 7 days
 
 # Original regimen from dataset
-pred_orig = predict(model, subj, ps, st; saveat=t_plot)
+pred_orig = predict(model, subj, ps_subj, st_subj; saveat=t_plot)
 
 # Once-daily 80 mg over 40 min (every 24 h)
 A_qd  = iv_regimen(0:24:168, fill(80, 8), 40/60)
@@ -165,8 +173,8 @@ cb_bid = generate_dosing_callback(A_bid, Float32)
 subj_qd  = copy(subj, cb_qd)
 subj_bid = copy(subj, cb_bid)
 
-pred_qd  = predict(model, subj_qd,  ps, st; saveat=t_plot)
-pred_bid = predict(model, subj_bid, ps, st; saveat=t_plot)
+pred_qd  = predict(model, subj_qd,  ps_subj, st_subj; saveat=t_plot)
+pred_bid = predict(model, subj_bid, ps_subj, st_subj; saveat=t_plot)
 
 fig = Figure(size=(750, 380))
 ax  = Axis(fig[1,1],
@@ -209,11 +217,12 @@ aucs_bid = Float32[]
 cmaxs_qd  = Float32[]
 cmaxs_bid = Float32[]
 
-for subj in population
+for (i, subj) in enumerate(population)
+    ps_i, st_i = take_batch(ps, st, [i])
     cb_q  = generate_dosing_callback(iv_regimen(0:24:168, fill(80, 8), duration), Float32)
     cb_b  = generate_dosing_callback(iv_regimen(0:12:168, fill(40, 15), duration), Float32)
-    ŷ_q   = predict(model, copy(subj, cb_q), ps, st; saveat=t_eval)
-    ŷ_b   = predict(model, copy(subj, cb_b), ps, st; saveat=t_eval)
+    ŷ_q   = predict(model, copy(subj, cb_q), ps_i, st_i; saveat=t_eval)
+    ŷ_b   = predict(model, copy(subj, cb_b), ps_i, st_i; saveat=t_eval)
     a_q, c_q = auc_and_cmax(ŷ_q, t_eval)
     a_b, c_b = auc_and_cmax(ŷ_b, t_eval)
     push!(aucs_qd,  a_q); push!(cmaxs_qd,  c_q)
@@ -264,23 +273,24 @@ new_pop     = Population([new_patient])
 ### Step 2 — Initialise individual posterior from the population prior
 
 We add a fresh variational posterior for the new patient, initialised from the
-learned prior Ω.
+learned prior Ω. `setup` creates parameters for the new population; we only keep
+its `phi` (μ = 0, covariance scaled from Ω) and combine it with the trained θ and Ω.
 
 ```{julia}
-# Fresh phi for the new patient (μ=0, Σ=Ω)
-ps_new_phi, st_new_phi = setup_phi(obj, rng, model, new_pop, ps.omega;
-    num_params=4)   # 4 = NN output size
+# Fresh phi for the new patient, with the variances of the learned Ω
+ω² = [ps.omega[i, i] for i in 1:size(ps.omega, 1)]
+ps_new, st_new = setup(obj, rng, model, new_pop; init_omega = ω², init_sigma = [0.5f0])
 
-# Build full ps for the new patient: keep population theta/omega, fresh phi
+# Build full ps for the new patient: keep population theta/error/omega, fresh phi
 ps_tdm = (
     theta = ps.theta,
     error = ps.error,
     omega = ps.omega,
-    phi   = ps_new_phi,
+    phi   = ps_new.phi,
 )
 st_tdm = (
     theta = st.theta,
-    phi   = st_new_phi,
+    phi   = st_new.phi,
 )
 ```
 
@@ -288,22 +298,19 @@ st_tdm = (
 
 ```{julia}
 function fit_individual_phi(obj, model, indv_pop, ps, st; epochs=400, lr=5f-3)
-    opt_phi = Optimisers.setup(Adam(lr), ps.phi)
+    opt_phi = Optimisers.setup(Optimisers.Adam(lr), ps.phi)
     for epoch in 1:epochs
         # Update epsilon samples (reparameterisation noise)
         st = update_state(st, obj, model, indv_pop, ps)
 
-        loss, grads = Zygote.withgradient(ps.phi) do φ
-            ps_local = @set ps.phi = φ
-            -elbo(model, indv_pop, ps_local, st)
-        end
-        _, new_phi = Optimisers.update(opt_phi, ps.phi, only(grads))
+        # Gradient of the negative ELBO (with the path derivative estimator, since `obj` uses it)
+        loss, ∇ = value_and_gradient(obj, model, indv_pop, ps, st)
+        opt_phi, new_phi = Optimisers.update(opt_phi, ps.phi, ∇.phi)
         ps = @set ps.phi = new_phi
     end
     return ps, st
 end
 
-import Zygote
 ps_tdm, st_tdm = fit_individual_phi(obj, model, new_pop, ps_tdm, st_tdm)
 println("Posterior μ: $(round.(ps_tdm.phi.μ[1], digits=3))")
 ```
@@ -367,13 +374,20 @@ axislegend(ax; position=:lt)
 fig
 ```
 
+```{julia}
+#| echo: false
+@assert last(losses) < 0.05 * first(losses) "-ELBO only went from $(first(losses)) to $(last(losses))"
+@assert 80 <= optimal_dose <= 140 "the recommended dose $(optimal_dose) mg is implausible (usually ≈100 mg)"
+@assert abs(aucs_pred[argmin(abs.(aucs_pred .- target_auc))] - target_auc) < 0.1 * target_auc "the grid does not reach the target AUC"
+```
+
 ---
 
 ## Summary
 
 | Task | Key function / pattern |
 |---|---|
-| Smooth prediction curve | `predict(model, indv, ps, st; saveat=dense_grid)` |
+| Smooth prediction curve | `predict(model, indv, ps_indv, st_indv; saveat=dense_grid)`, with `ps_indv, st_indv = take_batch(ps, st, [i])` |
 | New dosing regimen | `generate_dosing_callback(new_matrix, T)` |
 | Counterfactual individual | `copy(indv, new_callback)` |
 | Bayesian forecasting | `fit_individual_phi` — optimise `ps.phi` with frozen `ps.theta` |

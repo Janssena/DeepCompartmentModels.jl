@@ -1,0 +1,32 @@
+name: Tutorial timings
+
+# Runs each tutorial in its own process and records the wall time, so that slowdowns (for example
+# from an update of Enzyme or the ODE solvers) show up as a trend. The tutorials contain seeded
+# checks of the fitted results, so this job also fails when a tutorial stops learning. It is kept off
+# the pull request path: the documentation build already executes every tutorial there.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  timings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v2
+      - name: Install documentation dependencies
+        run: julia --project=docs -e 'using Pkg; Pkg.instantiate()'
+      - name: Time the tutorials
+        run: julia --project=docs docs/timings.jl tutorial_timings.csv
+      - name: Upload the timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tutorial-timings
+          path: tutorial_timings.csv

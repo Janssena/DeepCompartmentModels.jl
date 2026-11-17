@@ -3,9 +3,9 @@ import Distributions: fit
 default_callback(epoch, loss) = println("Epoch $epoch, loss = $loss")
 
 """
-    fit(obj, model, population, opt; rng, T, epochs, callback, parallel, batchsize, nbatch, init_sigma, params, ...)
-    fit(obj, model, population, opt, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
-    fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
+    fit(obj, model, population, opt; rng, T, epochs, callback, ad, parallel, batchsize, nbatch, init_sigma, params, ...)
+    fit(obj, model, population, opt, ps, st; rng, epochs, callback, ad, parallel, batchsize, nbatch)
+    fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, ad, parallel, batchsize, nbatch)
 
 Optimise the parameters of `model` by minimising `obj` on `population` with the optimiser `opt`.
 Each epoch is one gradient step on the whole population. `fit` is a thin wrapper around
@@ -16,7 +16,7 @@ ps, st = setup(obj, rng, model)
 opt_state = Optimisers.setup(opt, ps)
 for epoch in 1:epochs
     st = update_state(rng, st, obj, model, population, ps) # only does something for VariationalELBO
-    ∇ = gradient(obj, model, population, ps, st; parallel, batchsize, nbatch, rng)
+    ∇ = gradient(obj, model, population, ps, st; ad, parallel, batchsize, nbatch, rng)
     opt_state, ps = Optimisers.update(opt_state, ps, ∇)
 end
 ```
@@ -46,6 +46,9 @@ fixed effect objectives.
 - `rng = Random.default_rng()`: Random number generator used by `setup` (when `ps` and `st` are not given)
   and, for `VariationalELBO`, to resample the noise of the variational posteriors every epoch. Pass a
   seeded `rng` to make a fit reproducible.
+- `ad = AutoEnzyme(; mode = set_runtime_activity(Reverse))`: Automatic differentiation backend, passed to `gradient`.
+  Use `AutoForwardDiff()` for forward mode differentiation. `AutoZygote()` (after `import Zygote`) is only advised
+  for in-place `UniversalDiffEq`s with large networks, see [`gradient`](@ref).
 - `parallel = false`, `batchsize = nothing`, `nbatch = nothing`: Passed to `gradient`. `parallel = :individual`
   solves individuals on separate threads (start Julia with `-t auto`), `parallel = :batch` does so per
   mini-batch of `batchsize` individuals (at most) or in `nbatch` mini-batches; set at most one of them
@@ -68,31 +71,31 @@ predict(dcm, population[1], ps, st)
 function fit(
         obj::AbstractObjective, model::AbstractDEModel, population::Population, opt::Optimisers.AbstractRule;
         rng::Random.AbstractRNG = Random.default_rng(), T::Type{<:Real} = Float32, epochs = 100, callback = default_callback,
-        parallel = false, batchsize = nothing, nbatch = nothing, kwargs...
+        parallel = false, batchsize = nothing, nbatch = nothing, ad = default_ad(), kwargs...
     )
     _check_keywords(kwargs, _setup_keywords(obj), "These are the keywords of `setup` that `fit` passes on.")
     ps, st = _setup_for_fit(obj, rng, model, population, T; kwargs...)
     opt_state = Optimisers.setup(opt, ps)
-    return _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
+    return _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch, ad)
 end
 
 function fit(
         obj::AbstractObjective, model::AbstractDEModel, population::Population, opt::Optimisers.AbstractRule, ps, st;
         rng::Random.AbstractRNG = Random.default_rng(), epochs = 100, callback = default_callback,
-        parallel = false, batchsize = nothing, nbatch = nothing, kwargs...
+        parallel = false, batchsize = nothing, nbatch = nothing, ad = default_ad(), kwargs...
     )
     _check_keywords(kwargs, (), _PS_GIVEN_HINT)
     opt_state = Optimisers.setup(opt, ps)
-    return _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
+    return _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch, ad)
 end
 
 function fit(
         obj::AbstractObjective, model::AbstractDEModel, population::Population, opt_state::NamedTuple, ps, st;
         rng::Random.AbstractRNG = Random.default_rng(), epochs = 100, callback = default_callback,
-        parallel = false, batchsize = nothing, nbatch = nothing, kwargs...
+        parallel = false, batchsize = nothing, nbatch = nothing, ad = default_ad(), kwargs...
     )
     _check_keywords(kwargs, (), _PS_GIVEN_HINT)
-    return _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
+    return _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch, ad)
 end
 
 # Keywords of `setup` that `fit` passes on, per type of objective.
@@ -114,11 +117,11 @@ _setup_for_fit(obj::FixedObjective, rng, model, population, ::Type{T}; init_sigm
 _setup_for_fit(obj::MixedObjective, rng, model, population, ::Type{T}; kwargs...) where T =
     setup(obj, rng, model, population, T; kwargs...)
 
-function _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch)
+function _fit(obj, model, population, opt_state, ps, st; rng, epochs, callback, parallel, batchsize, nbatch, ad)
     try
         for epoch in 1:epochs
             st = update_state(rng, st, obj, model, population, ps)
-            loss, ∇ = value_and_gradient(obj, model, population, ps, st; parallel, batchsize, nbatch, rng)
+            loss, ∇ = value_and_gradient(obj, model, population, ps, st; ad, parallel, batchsize, nbatch, rng)
             callback(epoch, loss)
             opt_state, ps = Optimisers.update(opt_state, ps, ∇)
             ensure_posdef_phi!(obj, ps)

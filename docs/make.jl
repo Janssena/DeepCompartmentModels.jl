@@ -5,9 +5,8 @@ using DataFrames # loads the DCMDataFramesExt extension (`load`)
 include("qmd.jl")
 
 # The tutorials are Quarto notebooks in `tutorials/` (see `qmd.jl`). The ones listed
-# here run against the current API and are built into the site; the remaining
-# notebooks in `tutorials/` are kept but excluded until the features they use work
-# again (see docs/src/limitations.md). Set `DCM_TUTORIALS=01,02` to build a subset.
+# here run against the current API and are built into the site. Set
+# `DCM_TUTORIALS=01,02` to build a subset.
 const TUTORIALS = [
     "01-basic-dcm.qmd",
     "05-loading-data.qmd",
@@ -16,6 +15,10 @@ const TUTORIALS = [
     "03-universal-diffeq.qmd",
     "06-custom-ode.qmd",
     "04-covariate-effects.qmd",
+    "08-end-to-end.qmd",
+    "09-counterfactual.qmd",
+    "10-pkpd.qmd",
+    "11-occasions.qmd",
 ]
 
 selected = filter(!isempty, split(get(ENV, "DCM_TUTORIALS", ""), ','))

@@ -14,12 +14,20 @@ println("Done!")
         include("lib/population.test.jl")
     end
 
+    @testset "Solving" begin
+        include("lib/solve.test.jl")
+    end
+
     @testset "UniversalDiffEq" begin
         include("lib/ude.test.jl")
     end
 
     @testset "Fitting" begin
         include("lib/fit.test.jl")
+    end
+
+    @testset "Gradients" begin
+        include("lib/gradients.test.jl")
     end
 
     # The test files below were written for an older version of the package: they call functions that no

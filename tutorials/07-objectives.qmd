@@ -123,6 +123,12 @@ ps_ll, losses = train(LogLikelihood(), model_ll, population, ps_ll, st_ll; epoch
 (nll = losses[[1, end]], sigma = Lux.softplus.(ps_ll.error.σ))
 ```
 
+```{julia}
+#| echo: false
+@assert last(losses) < first(losses) "the negative log-likelihood did not decrease: $(losses[[1, end]])"
+@assert 0.1 < only(Lux.softplus.(ps_ll.error.σ)) < 0.8 "the estimated residual error $(only(Lux.softplus.(ps_ll.error.σ))) is implausible (usually ≈0.3)"
+```
+
 The fitted `σ` is the estimated relative error of the proportional model. The negative
 log-likelihood decreased while the network and `σ` were learned together.
 
