@@ -48,8 +48,7 @@ function SciMLBase.solve(
     sols = map(individual.occasions) do occ
         saveat_occ = filter(Base.Fix2(_within_occ, occ), saveat)
         tstops_occ = filter(Base.Fix2(_within_occ, occ), tstops)
-        _problem = remake(problem, tspan = (occ.first - T(0.1), problem.tspan[2]))
-        prob = _remake_prob(_problem, individual, saveat_occ, z)
+        prob = _remake_prob(problem, individual, saveat_occ, z; t0 = occ.first - T(0.1))
         return SciMLBase.solve(prob, solver;
             saveat = interpolate ? empty(saveat_occ) : saveat_occ, callback, 
             tstops = tstops_occ, kwargs...
@@ -61,17 +60,41 @@ end
 _within_occ(t::Real, occ::Pair) = t >= occ.first && t <= occ.second
 
 """
-    _remake_prob(problem, individual, saveat, z)
+    _remake_prob(problem, individual, saveat, z; t0 = problem.tspan[1])
 
-Internal function that remakes the DEProblem to have the same type as the Individual, takes the u0 from the 
-individual if not empty, sets the full DE parameters using `construct_p(z, individual)`, and makes sure 
-that the tspan is in support of the maximum of `saveat`.
+Internal function that remakes the DEProblem to have the same type as the Individual, takes the u0 from the
+individual if not empty, sets the full DE parameters using `construct_p(z, individual)`, and makes sure
+that the tspan starts at `t0` and is in support of the maximum of `saveat`.
+
+ODE problems are also switched to `SciMLBase.FullSpecialize` (see `_full_specialize`),
+whatever specialization the user (or a convenience constructor) created them with.
 """
-function _remake_prob(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual{T}, saveat, z::AbstractArray) where T
+function _remake_prob(prob::SciMLBase.AbstractDEProblem, individual::AbstractIndividual{T}, saveat, z::AbstractArray; t0 = prob.tspan[1]) where T
     p = construct_p(z, individual)
     u0 = _get_u0(T.(prob.u0), individual.u0)
-    return remake(prob, u0 = T.(u0), tspan = (T(prob.tspan[1]), T(maximum(saveat))), p = p)
+    return remake(prob; _specialization(prob)..., u0 = T.(u0), tspan = (T(t0), T(maximum(saveat))), p = p)
 end
+
+# With `AutoSpecialize` (the default of `ODEProblem`), DiffEqBase >= 7 erases the type of the callbacks into a
+# `CallbackSet{Vector{Any},Vector{Any}}` on Julia >= 1.12. This makes the return type of `solve` impossible
+# to infer (it is `Any` whenever a callback is present, as is the case for every dosing callback) and the callbacks
+# are dispatched dynamically inside the integrator (~2.5x slower for a small one-compartment solve).
+# `FullSpecialize` is not erased. Since the problem is remade for every solve anyway, we set it here, so that
+# it also applies to the problems passed in by users. Changing the specialization of the ODEFunction does not
+# affect the problem that was passed in.
+_specialization(prob::SciMLBase.AbstractODEProblem) = (; f = _full_specialize(prob.f))
+_specialization(::SciMLBase.AbstractDEProblem) = (;) # Only ODEFunctions are converted
+
+"""
+    _full_specialize(f)
+
+Returns the ODEFunction `f` with `SciMLBase.FullSpecialize`. All other fields of the function (mass matrix,
+jacobian, etc.) are kept. Functions that are already `FullSpecialize` (and other types of functions) are
+returned as is.
+"""
+_full_specialize(f::SciMLBase.ODEFunction{iip,SciMLBase.FullSpecialize}) where iip = f
+_full_specialize(f::SciMLBase.ODEFunction{iip}) where iip = SciMLBase.ODEFunction{iip,SciMLBase.FullSpecialize}(f)
+_full_specialize(f) = f
 
 # When interpolating, the solution has to be saved at the callback events. We return a modified
 # copy instead of changing `save_positions` on the callback of the individual, since that object

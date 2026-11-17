@@ -42,6 +42,12 @@ Development on the `feat/new-ude` branch, after 1.2.3.
 
 ### Changed
 
+- ODE problems are solved with `SciMLBase.FullSpecialize`: `solve` switches the ODE function of the
+  problem (also of user-supplied problems, which are not modified) to it when remaking the problem.
+  With the default `AutoSpecialize`, DiffEqBase 7 erases the type of the dosing callback on Julia 1.12
+  and later, which made the return type of `solve` and `solve_for_target` impossible to infer
+  (`Any`) and a small solve about 2.5 times slower. Individuals with occasions now remake the problem
+  once instead of twice.
 - Batching code (`create_batches`, `take_batch`, combining batch gradients) moved from
   `gradients.jl` and `optimization.jl` to a new `src/lib/batch.jl`. `create_batches` and `take_batch`
   are still exported.
